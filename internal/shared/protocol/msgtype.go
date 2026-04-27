@@ -22,8 +22,8 @@ const (
 
 // Handshake reject reasons.
 const (
-	NackReasonVersion    uint8 = 1
-	NackReasonAuth       uint8 = 2
-	NackReasonSession    uint8 = 3
-	NackReasonInternal   uint8 = 99
+	NackReasonVersion  uint8 = 1
+	NackReasonAuth     uint8 = 2
+	NackReasonSession  uint8 = 3
+	NackReasonInternal uint8 = 99
 )
