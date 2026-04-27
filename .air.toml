@@ -1,0 +1,30 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # Compile vào tmp/ — Windows chỉ hỏi firewall 1 lần duy nhất
+  cmd = "go build -o tmp/api.exe cmd/api/main.go"
+  bin = "tmp/api.exe"
+
+  # Chỉ watch file .go, .env
+  include_ext = ["go", "env"]
+
+  # Bỏ qua các thư mục không cần watch
+  exclude_dir  = ["vendor", "bin", "tmp", "testdata"]
+  exclude_file = []
+
+  # Delay 500ms sau khi detect thay đổi mới rebuild
+  # Tránh rebuild liên tục khi save nhiều file cùng lúc
+  delay = 500
+
+[log]
+  time = true
+
+[color]
+  main    = "magenta"
+  watcher = "cyan"
+  build   = "yellow"
+  runner  = "green"
+
+[misc]
+  clean_on_exit = true  # Xóa tmp/api.exe khi tắt Air

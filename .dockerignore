@@ -1,0 +1,34 @@
+# Git
+.git/
+.gitignore
+
+# Build artifacts — binary được build lại trong Docker
+bin/
+tmp/
+
+# Environment — tuyệt đối không copy vào image
+.env
+.env.*
+
+# Development tools
+.air.toml
+.golangci.yml
+coverage.out
+coverage.html
+
+# Test & Coverage
+coverage.out
+coverage.html
+*_test.go
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs — không cần trong image
+*.md
+docs/

@@ -1,0 +1,153 @@
+# ═══════════════════════════════════════════════════════════════
+# CI PIPELINE
+# Path: .github/workflows/ci.yml
+#
+# File này định nghĩa pipeline tự động chạy mỗi khi có code mới.
+# GitHub Actions đọc file này và thực thi từng bước theo thứ tự.
+#
+# Pipeline làm 4 việc theo thứ tự:
+#   1. Kiểm tra format code (gofmt)
+#   2. Build project — đảm bảo code compile được
+#   3. Chạy tests — đảm bảo logic không bị break
+#   4. Lint — bắt bug tiềm ẩn và giữ code quality
+#
+# Nếu bất kỳ bước nào fail (trừ lint), toàn bộ pipeline fail.
+# PR không nên merge khi pipeline đang đỏ.
+# ═══════════════════════════════════════════════════════════════
+
+name: CI
+
+# ───────────────────────────────────────────────────────────────
+# TRIGGER — Khi nào pipeline chạy
+#
+# push.branches    → chạy khi push trực tiếp lên main/master
+# pull_request     → chạy khi mở hoặc update PR vào main/master
+#
+# Mục đích: bắt lỗi sớm, trước khi code vào nhánh chính.
+# ───────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  ci:
+    name: Build & Test
+    # Runner là máy ảo Ubuntu do GitHub cung cấp miễn phí.
+    # ubuntu-latest là lựa chọn chuẩn cho Go project.
+    runs-on: ubuntu-latest
+
+    steps:
+      # ─────────────────────────────────────────────────────────
+      # STEP 1 — Checkout code
+      #
+      # Clone repo về máy runner để các bước sau có source code.
+      # actions/checkout là action chính thức của GitHub.
+      # @v4 là version cố định — tránh breaking change khi action update.
+      # ─────────────────────────────────────────────────────────
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ─────────────────────────────────────────────────────────
+      # STEP 2 — Cài Go
+      #
+      # "1.22.x" → lấy patch version mới nhất của Go 1.22
+      # (ví dụ: 1.22.0, 1.22.1, 1.22.4...)
+      # Không dùng "1.22" không có .x vì setup-go có thể resolve sai.
+      #
+      # cache: true → cache Go modules giữa các lần chạy.
+      # Giảm thời gian pipeline từ ~2 phút xuống ~30 giây.
+      #
+      # TODO: Cập nhật version này khi bạn nâng Go trong go.mod
+      # ─────────────────────────────────────────────────────────
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+
+      # ─────────────────────────────────────────────────────────
+      # STEP 3 — Tải dependencies
+      #
+      # Tải tất cả package trong go.mod về runner.
+      # Bước này chạy trước build/test để tách rõ lỗi:
+      # nếu fail ở đây → vấn đề là dependency, không phải code.
+      # ─────────────────────────────────────────────────────────
+      - name: Download dependencies
+        run: go mod download
+
+      # ─────────────────────────────────────────────────────────
+      # STEP 4 — Kiểm tra format code
+      #
+      # gofmt -l . → liệt kê các file chưa được format đúng chuẩn Go.
+      # test -z    → fail nếu output không rỗng (tức là có file sai format).
+      #
+      # Tại sao cần: format không nhất quán gây noise trong code review,
+      # khó đọc diff, và là dấu hiệu code chưa được kiểm tra kỹ.
+      #
+      # Fix local: chạy "make fmt" hoặc "gofmt -w ." trước khi push.
+      # ─────────────────────────────────────────────────────────
+      - name: Check format (gofmt)
+        run: test -z "$(gofmt -l .)"
+
+      # ─────────────────────────────────────────────────────────
+      # STEP 5 — Build
+      #
+      # go build ./... → compile toàn bộ package trong project.
+      # Nếu fail ở đây → có syntax error hoặc import sai.
+      #
+      # Bước này chạy trước test vì build fail thì test không có nghĩa.
+      # ─────────────────────────────────────────────────────────
+      - name: Build
+        run: go build ./...
+
+      # ─────────────────────────────────────────────────────────
+      # STEP 6 — Chạy tests
+      #
+      # Skeleton repo mặc định không có test file nào.
+      # Nếu chạy "go test ./..." khi không có file *_test.go,
+      # Go có thể trả về lỗi trên một số version → CI fail oan.
+      #
+      # Script này kiểm tra trước: nếu có test file thì mới chạy,
+      # nếu không thì skip với thông báo rõ ràng.
+      #
+      # -count=1  → tắt test cache, đảm bảo test luôn chạy thật.
+      # -race     → bật race detector, bắt data race trong concurrent code.
+      #             Quan trọng với Go — nên giữ flag này từ đầu.
+      #
+      # Fix local: chạy "make test" trước khi push.
+      # ─────────────────────────────────────────────────────────
+      - name: Test
+        run: |
+          if find . -name "*_test.go" | grep -q .; then
+            go test -count=1 -race ./...
+          else
+            echo "No test files found, skipping."
+          fi
+
+      # ─────────────────────────────────────────────────────────
+      # STEP 7 — Lint (optional)
+      #
+      # golangci-lint chạy nhiều linter cùng lúc, bắt các vấn đề:
+      # - Bug tiềm ẩn (nilcheck, errcheck...)
+      # - Code style không nhất quán
+      # - Dead code, unused variable
+      # Config linter nằm ở file .golangci.yml trong root repo.
+      #
+      # version: cố định để tránh breaking change khi lint release mới.
+      # TODO: Cập nhật version này định kỳ (kiểm tra github.com/golangci/golangci-lint/releases)
+      #
+      # continue-on-error: true → pipeline vẫn pass dù lint có warning.
+      # Lý do: skeleton repo chưa có business code, lint chưa có nhiều
+      # ý nghĩa. Khi repo lớn dần, đổi thành false để enforce nghiêm hơn.
+      # ─────────────────────────────────────────────────────────
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+        continue-on-error: true

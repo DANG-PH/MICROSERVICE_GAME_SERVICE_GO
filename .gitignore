@@ -1,0 +1,48 @@
+# ── Binaries ──────────────────────────────────────────────────
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# ── Go ────────────────────────────────────────────────────────
+go.sum
+vendor/
+
+# ── Environment ───────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Test & Coverage ───────────────────────────────────────────
+coverage.out
+coverage.html
+*.test
+
+# ── Air live reload ───────────────────────────────────────────
+tmp/
+
+# ── Build artifacts ───────────────────────────────────────────
+dist/
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Proto generated ───────────────────────────────────────────
+# Uncomment nếu không commit generated code
+# *.pb.go

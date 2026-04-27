@@ -1,0 +1,25 @@
+# ═══════════════════════════════════════════════════════════════
+# CODEOWNERS
+# Path: .github/CODEOWNERS
+#
+# File này yêu cầu GitHub tự động assign reviewer khi có PR.
+# Mọi PR sẽ không thể merge cho đến khi người được assign approve.
+#
+# ⚠️  QUAN TRỌNG — File này chỉ có tác dụng khi bật Branch Protection:
+#     GitHub repo → Settings → Branches → Add rule → chọn branch "main"
+#     ☑ Require a pull request before merging
+#     ☑ Require review from Code Owners
+#     Nếu không bật, file này chỉ là văn bản, không enforce được gì.
+#
+# TODO: Bỏ comment và thay YOUR_GITHUB_USERNAME thành username thật
+# Ví dụ: * @DANG-PH
+# ═══════════════════════════════════════════════════════════════
+
+# Default — áp dụng cho toàn bộ repo nếu không có rule nào khớp
+# * @YOUR_GITHUB_USERNAME
+
+# Business logic và domain
+# internal/ @YOUR_GITHUB_USERNAME
+
+# CI/CD pipelines
+# .github/ @YOUR_GITHUB_USERNAME

@@ -1,0 +1,92 @@
+# .golangci.yml
+# Cấu hình cho golangci-lint — chạy bằng: golangci-lint run ./...
+# Cài đặt: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+# Docs: https://golangci-lint.run/usage/configuration/
+
+run:
+  # Timeout cho toàn bộ quá trình lint
+  timeout: 5m
+
+  # Phiên bản Go — phải khớp với go.mod
+  go: "1.22"
+
+  # Bỏ qua các folder này khi lint
+  skip-dirs:
+    - vendor/
+    - tmp/
+    - bin/
+
+linters:
+  # Tắt tất cả linter mặc định, chỉ bật những cái liệt kê bên dưới
+  # Lý do: tránh bị overwhelm khi mới bắt đầu, bật dần khi team quen
+  disable-all: true
+
+  enable:
+    # ── Bắt buộc ────────────────────────────────────────────
+    - errcheck      # Phát hiện error bị bỏ qua không check
+                    # Ví dụ: rows.Close() không check error → data leak
+
+    - govet         # Built-in Go checker — suspicious constructs
+                    # Ví dụ: fmt.Sprintf format string sai kiểu
+
+    - staticcheck   # Static analysis nâng cao — bug tiềm ẩn
+                    # Ví dụ: context bị cancel trước khi dùng
+
+    - unused        # Phát hiện function, variable, import không dùng
+
+    # ── Code style ──────────────────────────────────────────
+    - gofmt         # Code phải được format bằng gofmt
+                    # Fix tự động: gofmt -w .
+
+    - goimports     # Import phải được sort và group đúng chuẩn
+                    # Fix tự động: goimports -w .
+
+    # ── Security ────────────────────────────────────────────
+    - gosec         # Phát hiện security issues
+                    # Ví dụ: SQL injection, hardcoded credentials, weak crypto
+
+    # ── Complexity ──────────────────────────────────────────
+    - gocyclo       # Giới hạn cyclomatic complexity của function
+                    # Function quá nhiều if/else/switch → khó test, khó đọc
+
+    # ── Bugs ────────────────────────────────────────────────
+    - bodyclose     # HTTP response body phải được close
+                    # Thiếu defer resp.Body.Close() → goroutine leak
+
+    - noctx         # HTTP request phải có context
+                    # http.Get() không có context → không cancel được
+
+linters-settings:
+  gocyclo:
+    # Complexity tối đa cho 1 function
+    # 10 = chuẩn, 15 = thoải mái hơn, >20 = nên refactor
+    min-complexity: 15
+
+  errcheck:
+    # Check cả type assertion: x.(Type) không có ok
+    check-type-assertions: true
+
+    # Check cả blank identifier: _ = someFunc()
+    check-blank: true
+
+  gosec:
+    excludes:
+      # G104: errors unhandled — đã có errcheck lo rồi, tránh báo 2 lần
+      - G104
+
+issues:
+  exclude-rules:
+    # Test files được phép linh hoạt hơn
+    - path: _test\.go
+      linters:
+        - gosec      # test không cần strict về security
+        - errcheck   # test thường ignore error có chủ đích
+
+    # Generated proto files — không lint
+    - path: ".*\\.pb\\.go"
+      linters:
+        - all
+
+  # Không giới hạn số issue hiển thị
+  max-issues-per-linter: 0
+  max-same-issues: 0
