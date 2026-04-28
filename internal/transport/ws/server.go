@@ -38,7 +38,7 @@ func NewServer(log *slog.Logger, hub *Hub, auth *Authenticator, handler *Handler
 	}
 }
 
-// ServeHTTP implement http.Handler.
+// ServeHTTP implement http.Handler. (Duck Typing)
 // Đăng ký vào router: mux.Handle("/ws-game", server)
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wsConn, err := s.upgrader.Upgrade(w, r, nil)

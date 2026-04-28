@@ -51,7 +51,7 @@ var (
 // Tại sao có 2 nguồn? Để Go service không phải parse JWT mỗi packet — chỉ parse 1 lần lúc handshake.
 func (a *Authenticator) Verify(ctx context.Context, token string, gameSessionID string, claimedUserID int32) (*AuthResult, error) {
 	// Parse JWT.
-	parsed, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+	parsed, err := jwt.Parse(token, func(t *jwt.Token) (any, error) {
 		// NestJS dùng HS256 mặc định. Nếu sau này đổi sang RS256 thì phải verify khác.
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
@@ -89,7 +89,7 @@ func (a *Authenticator) Verify(ctx context.Context, token string, gameSessionID 
 		return nil, ErrInvalidSession
 	}
 
-	// Lấy role nếu có (optional).
+	// Lấy role (optional).
 	role, _ := claims["role"].(string)
 
 	return &AuthResult{

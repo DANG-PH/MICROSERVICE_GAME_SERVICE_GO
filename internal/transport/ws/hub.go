@@ -24,6 +24,7 @@ type Hub struct {
 	connsByUser map[int32]*Conn
 	// mapID → set of conn. Để broadcast tới room.
 	// Dùng map[*Conn]struct{} thay vì slice vì delete O(1).
+	// struct{} là empty struct — type duy nhất trong Go không chiếm memory. Dùng khi chỉ quan tâm đến key có tồn tại hay không, không quan tâm value.
 	roomsByMap map[string]map[*Conn]struct{}
 }
 

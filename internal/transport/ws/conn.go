@@ -38,11 +38,14 @@ const (
 	// Time để write 1 message tới peer.
 	writeWait = 10 * time.Second
 
-	// Time để đọc pong từ peer. Phải lớn hơn pingPeriod.
-	pongWait = 60 * time.Second
+	// Rất lớn vì Go không phải primary disconnect mechanism.
+	// NestJS (pingTimeout 10s) sẽ luôn ngắt trước.
+	// Go chỉ tự ngắt khi có lỗi thực sự (write/read error).
+	pongWait = 120 * time.Second
 
-	// Gửi ping mỗi pingPeriod giây. Phải nhỏ hơn pongWait.
-	pingPeriod = (pongWait * 9) / 10
+	// Không cần ping thường xuyên vì NestJS đã ping mỗi 5s.
+	// Chỉ để detect case NestJS chết mà không notify Go.
+	pingPeriod = 30 * time.Second
 
 	// Max size 1 message client gửi lên. 4KB đủ cho mọi packet game.
 	maxMessageSize = 4096
@@ -81,10 +84,14 @@ func (c *Conn) Close() {
 // readLoop chạy trong goroutine riêng.
 // Đọc message từ WebSocket, gọi handler để xử lý.
 // Khi có lỗi (client disconnect, bad packet) → return → defer close conn.
+// TODO: expose POST /internal/kick để NestJS notify khi user disconnect.
+// Go timeout 60s hiện tại chỉ là safety net — primary mechanism sẽ là NestJS gọi vào đây.
 func (c *Conn) readLoop(handler MessageHandler) {
 	defer func() {
 		c.hub.unregister(c)
 		c.Close()
+		// TODO: notify NestJS user X disconnect
+		// notifyNestJS(c.userID)
 	}()
 
 	c.ws.SetReadLimit(maxMessageSize)

@@ -76,4 +76,21 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 			h.log.Warn("redis update failed", "err", err, "userID", userID)
 		}
 	}(c.userID, m)
+
+	// Tại sao cần go ở đây?
+	// client không đợi response. Nhưng readLoop mới là người đợi:
+	// readLoop gọi handler.Handle(c, data)
+	// 	→ handlePlayerMove chạy
+	// 	→ nếu không có go: block ở Redis update (có thể 50-200ms)
+	// 	→ trong thời gian đó readLoop KHÔNG đọc packet mới
+	// 	→ client gửi tiếp 10 move packet → tất cả nằm chờ trong TCP buffer
+	// 	→ gameplay bị lag
+	// Có go:
+	// 	→ broadcast ngay (< 1ms)
+	// 	→ Redis update chạy ngầm
+	// 	→ readLoop tiếp tục đọc packet mới ngay lập tức
+	// Game realtime mỗi giây có thể có hàng chục move packet — block readLoop dù 50ms cũng ảnh hưởng gameplay.
+	// TODO: goroutine per-packet có thể ghi đè state cũ lên state mới nếu Redis chậm.
+	// Chấp nhận được vì Redis chỉ là snapshot cho NestJS đọc, không ảnh hưởng gameplay.
+	// Fix nếu NestJS cần Redis chính xác tuyệt đối.
 }
