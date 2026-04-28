@@ -1,84 +1,191 @@
 package ws
 
 import (
+	"context"
 	"log/slog"
 	"sync"
+	"time"
 )
 
-// Hub quản lý tất cả connection và phân loại theo map.
-//
-// THIẾT KẾ LOCK:
-// 1 sync.RWMutex global cho cả hub thì đơn giản nhưng contention cao —
-// mỗi broadcast phải acquire lock để iterate connection trong map đó.
-//
-// Cải thiện: sharded map theo mapID. Mỗi map có lock riêng.
-// Nhưng giai đoạn này 1 lock đơn giản đã đủ — game của bạn chưa có 100k CCU.
-// Khi nào benchmark thấy lock contention thì refactor sang sharded.
-//
-// Pattern này gọi là "central registry" — nhiều framework dùng (Phoenix Channels, ws_bridge, ...).
 type Hub struct {
 	log *slog.Logger
+	bus *Bus // nil = single-instance mode (dev/test)
 
-	mu sync.RWMutex
-	// userID → conn. Để gửi point-to-point (kick socket, error reply).
+	mu          sync.RWMutex
 	connsByUser map[int32]*Conn
-	// mapID → set of conn. Để broadcast tới room.
-	// Dùng map[*Conn]struct{} thay vì slice vì delete O(1).
-	// struct{} là empty struct — type duy nhất trong Go không chiếm memory. Dùng khi chỉ quan tâm đến key có tồn tại hay không, không quan tâm value.
-	roomsByMap map[string]map[*Conn]struct{}
+	roomsByMap  map[string]map[*Conn]struct{}
 }
 
-func NewHub(log *slog.Logger) *Hub {
-	return &Hub{
+// NewHub — bus có thể nil (chạy single instance, ví dụ test).
+func NewHub(log *slog.Logger, bus *Bus) *Hub {
+	h := &Hub{
 		log:         log,
+		bus:         bus,
 		connsByUser: make(map[int32]*Conn),
 		roomsByMap:  make(map[string]map[*Conn]struct{}),
 	}
-}
 
-// register thêm conn sau khi handshake thành công.
-// Nếu user này đã có connection cũ → kick cũ trước (chỉ cho phép 1 connection per user).
-// Khớp với pattern NestJS: nếu mở 2 tab thì 1 tab bị kick.
-func (h *Hub) register(c *Conn) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Kick connection cũ nếu có.
-	if oldConn, exists := h.connsByUser[c.userID]; exists {
-		h.log.Info("user already connected, kicking old conn", "userID", c.userID)
-		// Close ngoài lock để tránh deadlock — nhưng ở đây oldConn.Close()
-		// chỉ close channel, không gọi back vào hub → an toàn.
-		oldConn.Close()
-		// Cleanup oldConn khỏi room.
-		h.removeFromRoomLocked(oldConn)
+	if bus != nil {
+		bus.SetHandlers(
+			h.localBroadcastToMap,
+			func(userID int32, data []byte) {
+				h.localSendToUser(userID, data) // discard bool
+			},
+			h.localKickUser,
+		)
 	}
 
-	h.connsByUser[c.userID] = c
-	h.addToRoomLocked(c)
-
-	h.log.Info("conn registered", "userID", c.userID, "mapID", c.mapID,
-		"totalConns", len(h.connsByUser))
+	return h
 }
 
-// unregister gọi khi conn close (read loop return).
+// === API PUBLIC — call site không thay đổi ===
+
+func (h *Hub) BroadcastToMap(mapID string, data []byte, excludeConn *Conn) {
+	// 1. Broadcast local trước (latency thấp nhất).
+	var excludeUserID int32
+	if excludeConn != nil {
+		excludeUserID = excludeConn.userID
+	}
+	h.localBroadcastToMap(mapID, data, excludeUserID)
+
+	// 2. Fan-out cross-instance qua Redis.
+	if h.bus != nil {
+		// Fire-and-forget: publish chậm vài ms cũng không nên block call site.
+		// Timeout ngắn — nếu Redis chậm thì drop, không backlog.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			if err := h.bus.PublishBroadcast(ctx, mapID, data, excludeUserID); err != nil {
+				h.log.Warn("publish broadcast failed", "err", err, "mapID", mapID)
+			}
+		}()
+	}
+}
+
+func (h *Hub) SendToUser(userID int32, data []byte) bool {
+	// Try local trước.
+	if h.localSendToUser(userID, data) {
+		return true
+	}
+
+	// Local không có → user có thể đang ở instance khác. Publish.
+	if h.bus != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			if err := h.bus.PublishSendToUser(ctx, userID, data); err != nil {
+				h.log.Warn("publish send failed", "err", err, "userID", userID)
+			}
+		}()
+		// Trả true vì có thể có instance khác sẽ deliver.
+		// Caller không thể biết chắc — chấp nhận uncertainty.
+		return true
+	}
+	return false
+}
+
+// KickUser kick user dù họ đang ở instance nào.
+// Dùng khi: register conn mới mà thấy user đã có conn cũ ở instance khác.
+func (h *Hub) KickUser(userID int32) {
+	h.localKickUser(userID)
+	if h.bus != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			if err := h.bus.PublishKickUser(ctx, userID); err != nil {
+				h.log.Warn("publish kick failed", "err", err, "userID", userID)
+			}
+		}()
+	}
+}
+
+// === LOCAL METHODS — chỉ thao tác conn trên instance này ===
+
+func (h *Hub) localBroadcastToMap(mapID string, data []byte, excludeUserID int32) {
+	h.mu.RLock()
+	room, ok := h.roomsByMap[mapID]
+	if !ok {
+		h.mu.RUnlock()
+		return
+	}
+	conns := make([]*Conn, 0, len(room))
+	for c := range room {
+		if c.userID != excludeUserID {
+			conns = append(conns, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range conns {
+		c.Send(data)
+	}
+}
+
+func (h *Hub) localSendToUser(userID int32, data []byte) bool {
+	h.mu.RLock()
+	c, ok := h.connsByUser[userID]
+	h.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	c.Send(data)
+	return true
+}
+
+func (h *Hub) localKickUser(userID int32) {
+	h.mu.Lock()
+	c, ok := h.connsByUser[userID]
+	if ok {
+		delete(h.connsByUser, userID)
+		h.removeFromRoomLocked(c)
+	}
+	h.mu.Unlock()
+
+	if ok {
+		c.Close()
+		h.log.Info("user kicked", "userID", userID)
+	}
+}
+
+// === REGISTER/UNREGISTER — sửa nhẹ để dùng cross-instance kick ===
+
+func (h *Hub) register(c *Conn) {
+	h.mu.Lock()
+	if oldConn, exists := h.connsByUser[c.userID]; exists {
+		h.log.Info("user already connected on this instance, kicking old conn", "userID", c.userID)
+		oldConn.Close()
+		h.removeFromRoomLocked(oldConn)
+	}
+	h.connsByUser[c.userID] = c
+	h.addToRoomLocked(c)
+	h.mu.Unlock()
+
+	// Kick conn cũ ở instance KHÁC nếu có.
+	// Note: cũng publish kể cả khi đã kick local — vì user có thể có conn ở cả 2 instance.
+	// Bus sẽ skip echo về chính mình.
+	if h.bus != nil {
+		go func(uid int32) {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			if err := h.bus.PublishKickUser(ctx, uid); err != nil {
+				h.log.Warn("publish kick on register failed", "err", err)
+			}
+		}(c.userID)
+	}
+
+	h.log.Info("conn registered", "userID", c.userID, "mapID", c.mapID)
+}
+
 func (h *Hub) unregister(c *Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	// Chỉ xóa nếu conn này vẫn là conn đang active của user
-	// (tránh case kick xảy ra: oldConn.unregister() chạy SAU newConn.register()
-	// → sẽ vô tình xóa newConn ra khỏi map).
 	if existing, ok := h.connsByUser[c.userID]; ok && existing == c {
 		delete(h.connsByUser, c.userID)
 	}
 	h.removeFromRoomLocked(c)
-
-	h.log.Info("conn unregistered", "userID", c.userID,
-		"totalConns", len(h.connsByUser))
 }
 
-// MoveToRoom đổi map của conn. Gọi khi NestJS bắn event setMap qua Redis pub/sub
-// (sau này implement) — Phase 1 chưa cần.
+// MoveToRoom giữ nguyên — đổi map chỉ là local concern.
 func (h *Hub) MoveToRoom(c *Conn, newMap string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -113,48 +220,6 @@ func (h *Hub) removeFromRoomLocked(c *Conn) {
 	}
 }
 
-// BroadcastToMap gửi message tới tất cả conn trong map, TRỪ conn excludeConn.
-// excludeConn = nil để gửi tới tất cả.
-//
-// Pattern Socket.IO: this.server.to(MAP:x).emit(...) gửi tới tất cả.
-// Pattern client.to(MAP:x).emit(...) gửi tới tất cả TRỪ chính client đó.
-// Hàm này hỗ trợ cả 2 case bằng excludeConn.
-func (h *Hub) BroadcastToMap(mapID string, data []byte, excludeConn *Conn) {
-	h.mu.RLock()
-	room, ok := h.roomsByMap[mapID]
-	if !ok {
-		h.mu.RUnlock()
-		return
-	}
-
-	// Copy danh sách conn ra slice để release lock sớm.
-	// Nếu giữ lock trong khi Send() → các Send() bị block khi slow client → block luôn các request khác.
-	conns := make([]*Conn, 0, len(room))
-	for c := range room {
-		if c != excludeConn {
-			conns = append(conns, c)
-		}
-	}
-	h.mu.RUnlock()
-
-	for _, c := range conns {
-		c.Send(data)
-	}
-}
-
-// SendToUser gửi message tới 1 user cụ thể.
-func (h *Hub) SendToUser(userID int32, data []byte) bool {
-	h.mu.RLock()
-	c, ok := h.connsByUser[userID]
-	h.mu.RUnlock()
-	if !ok {
-		return false
-	}
-	c.Send(data)
-	return true
-}
-
-// Stats trả về metric cho monitoring.
 func (h *Hub) Stats() (totalConns int, totalRooms int) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

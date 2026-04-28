@@ -21,20 +21,30 @@ type App struct {
 	cfg    *config.Config
 	log    *slog.Logger
 	server *http.Server
+	bus    *ws.Bus // cross-instance message bus, cần Stop() khi shutdown
 }
 
 // New khởi tạo app: load deps, wire components.
 // Nếu khởi tạo fail → return error → main.go log và exit.
 func New(cfg *config.Config, log *slog.Logger) (*App, error) {
-	// Redis.
+	// Redis client cho business logic (player state, session, ...).
 	rdb, err := redisclient.New(cfg.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("init redis: %w", err)
 	}
 	log.Info("redis connected", "url", cfg.RedisURL)
 
-	// Hub - quản lý WebSocket connections.
-	hub := ws.NewHub(log)
+	// Bus - cross-instance Pub/Sub cho broadcast giữa các Go instance.
+	// Tự tạo 2 Redis connection riêng (pub + sub) bên trong, không dùng chung rdb
+	// vì sub mode sẽ block connection.
+	bus, err := ws.NewBus(cfg.RedisURL, log)
+	if err != nil {
+		return nil, fmt.Errorf("init bus: %w", err)
+	}
+	log.Info("bus initialized", "nodeID", bus.NodeID())
+
+	// Hub - quản lý WebSocket connections, wire bus để broadcast cross-instance.
+	hub := ws.NewHub(log, bus)
 
 	// Auth - verify JWT + gameSession.
 	auth := ws.NewAuthenticator(cfg.JWTSecret, rdb)
@@ -53,9 +63,10 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	mux.Handle("/ws-game", wsServer)
 
 	// Healthcheck cho k8s/load balancer.
+	// Thêm nodeID để debug multi-instance dễ hơn (curl healthcheck biết hit instance nào).
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		totalConns, totalRooms := hub.Stats()
-		fmt.Fprintf(w, "ok\nconns=%d\nrooms=%d\n", totalConns, totalRooms)
+		fmt.Fprintf(w, "ok\nnode=%s\nconns=%d\nrooms=%d\n", bus.NodeID(), totalConns, totalRooms)
 	})
 
 	// HTTP server với timeout config.
@@ -72,12 +83,20 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		cfg:    cfg,
 		log:    log,
 		server: server,
+		bus:    bus,
 	}, nil
 }
 
-// Run start HTTP server. Block tới khi server fail hoặc Shutdown được gọi.
+// Run start HTTP server và bus subscriber. Block tới khi server fail hoặc Shutdown được gọi.
 func (a *App) Run() error {
-	a.log.Info("server starting", "port", a.cfg.HTTPPort)
+	// Start bus subscriber TRƯỚC khi accept WebSocket connection.
+	// Nếu bus chưa start mà có conn vào → broadcast từ instance khác bị miss.
+	// Dùng Background context — bus chạy đến khi Stop() được gọi.
+	if err := a.bus.Start(context.Background()); err != nil {
+		return fmt.Errorf("start bus: %w", err)
+	}
+
+	a.log.Info("server starting", "port", a.cfg.HTTPPort, "nodeID", a.bus.NodeID())
 	if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -86,7 +105,21 @@ func (a *App) Run() error {
 
 // Shutdown graceful — đợi current connection xong rồi mới close.
 // Đặt timeout để không treo mãi nếu có connection stuck.
+//
+// Thứ tự shutdown quan trọng:
+//  1. HTTP server stop accept conn mới + đợi conn hiện tại
+//  2. Bus stop (đóng Redis subscriber + pub/sub client)
+//
+// Nếu đảo ngược: bus stop trước → conn còn lại broadcast sẽ fail publish → log noise.
 func (a *App) Shutdown(ctx context.Context) error {
 	a.log.Info("server shutting down")
-	return a.server.Shutdown(ctx)
+
+	if err := a.server.Shutdown(ctx); err != nil {
+		// Vẫn cố gắng stop bus dù server shutdown lỗi.
+		a.log.Warn("http server shutdown error", "err", err)
+	}
+
+	a.bus.Stop()
+	a.log.Info("bus stopped")
+	return nil
 }
