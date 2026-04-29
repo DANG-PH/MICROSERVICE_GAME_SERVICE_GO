@@ -67,7 +67,26 @@ func (c *Conn) Send(data []byte) {
 	select {
 	case c.send <- data:
 	default:
+		// Channel của user này đã tích 256 message chưa gửi được.
+		// Nguyên nhân: writeLoop của user này không pop kịp, do:
+		//   - Network user chậm (3G, WiFi yếu, mất gói TCP)
+		//   - Client device chậm xử lý
+		//   - Client treo / slow loris attack
+		//
+		// Lưu ý: 256 là per-conn, không phải shared. User khác trong cùng map
+		// không bị ảnh hưởng — channel của họ vẫn xử lý bình thường.
+		//
+		// Khi map quá đông (vd 1000 user × 60Hz broadcast) → mỗi user nhận
+		// 60.000 msg/s, vượt khả năng WebSocket → kick hàng loạt.
+		// Lúc đó cần optimize bằng AOI / sharding theo vùng / giảm tickrate,
+		// không phải tăng buffer channel.
+
 		// Channel đầy → client quá chậm, kick.
+		// Vì sao chọn kick?
+		// Vì nếu block cho đến khi nhận được data thì for loop để send cho các client khác cũng bị block theo
+		// Client 5 lag thì client 6, 7,... phải đợi là sai
+		// Ở đây chọn kick luôn client 5, để cho client 5 tự reconnect lại map khi mạng khỏe
+		// 256 ở đây là sweet pot để kick, k quá ít cũng k quá nhiều
 		c.log.Warn("send channel full, closing conn", "userID", c.userID)
 		c.Close()
 	}

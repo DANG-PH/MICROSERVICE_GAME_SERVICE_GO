@@ -21,7 +21,7 @@ type App struct {
 	cfg    *config.Config
 	log    *slog.Logger
 	server *http.Server
-	bus    *ws.Bus // cross-instance message bus, cần Stop() khi shutdown
+	bus    ws.BusInterface // cross-instance message bus, cần Stop() khi shutdown
 }
 
 // New khởi tạo app: load deps, wire components.
@@ -34,14 +34,17 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	}
 	log.Info("redis connected", "url", cfg.RedisURL)
 
-	// Bus - cross-instance Pub/Sub cho broadcast giữa các Go instance.
-	// Tự tạo 2 Redis connection riêng (pub + sub) bên trong, không dùng chung rdb
-	// vì sub mode sẽ block connection.
-	bus, err := ws.NewBus(cfg.RedisURL, log)
+	var bus ws.BusInterface
+	if cfg.UseNATS {
+		log.Info("using NATS bus")
+		bus, err = ws.NewNATSBus(cfg.NATSURL, log)
+	} else {
+		log.Info("using Redis bus")
+		bus, err = ws.NewBus(cfg.RedisURL, log)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("init bus: %w", err)
 	}
-	log.Info("bus initialized", "nodeID", bus.NodeID())
 
 	// Hub - quản lý WebSocket connections, wire bus để broadcast cross-instance.
 	hub := ws.NewHub(log, bus)
