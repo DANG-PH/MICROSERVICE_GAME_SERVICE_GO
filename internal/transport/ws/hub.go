@@ -121,17 +121,21 @@ func (h *Hub) OnKickUser(userID int32) {
 // Pattern client.to(MAP:x).emit(...) gửi tới tất cả TRỪ chính client đó.
 // Hàm này hỗ trợ cả 2 case bằng excludeConn.
 func (h *Hub) BroadcastToMap(mapID string, data []byte, excludeConn *Conn) {
-	// 1. Broadcast local trước (latency thấp nhất).
 	var excludeUserID int32
 	if excludeConn != nil {
 		excludeUserID = excludeConn.userID
 	}
+	h.BroadcastToMapExcludeUser(mapID, data, excludeUserID)
+}
+
+// BroadcastToMapExcludeUser giống BroadcastToMap nhưng exclude theo userID
+// thay vì theo *Conn — tiện cho tick loop (không cần lookup conn).
+func (h *Hub) BroadcastToMapExcludeUser(mapID string, data []byte, excludeUserID int32) {
+	// Local broadcast
 	h.OnBroadcast(mapID, data, excludeUserID)
 
-	// 2. Fan-out cross-instance qua Redis.
+	// Cross-instance
 	if h.bus != nil {
-		// Fire-and-forget: publish chậm vài ms cũng không nên block call site.
-		// Timeout ngắn — nếu Redis chậm thì drop, không backlog.
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()

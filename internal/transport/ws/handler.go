@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/DANG-PH/game-service-go/internal/game/player"
+	"github.com/DANG-PH/game-service-go/internal/game/state"
 	"github.com/DANG-PH/game-service-go/internal/shared/messages"
 	"github.com/DANG-PH/game-service-go/internal/shared/protocol"
 )
@@ -15,16 +16,21 @@ import (
 //
 // Pattern này gọi là "dispatcher" — đơn giản, dễ đọc, không cần reflection.
 // Khi thêm message mới: thêm const ở protocol/msgtype.go, thêm case ở đây, tạo file message struct.
+// - KHÔNG broadcast trực tiếp — chỉ update state.
+// - Tick loop sẽ broadcast 20Hz.
+// - Vẫn giữ Redis update (cần cho NestJS đọc + cron flush DB).
 type Handler struct {
 	log           *slog.Logger
 	hub           *Hub
+	manager       *state.Manager
 	playerService *player.Service
 }
 
-func NewHandler(log *slog.Logger, hub *Hub, ps *player.Service) *Handler {
+func NewHandler(log *slog.Logger, hub *Hub, manager *state.Manager, ps *player.Service) *Handler {
 	return &Handler{
 		log:           log,
 		hub:           hub,
+		manager:       manager,
 		playerService: ps,
 	}
 }
@@ -34,6 +40,10 @@ func NewHandler(log *slog.Logger, hub *Hub, ps *player.Service) *Handler {
 //
 // data[0] = msgType, data[1:] = payload.
 func (h *Handler) Handle(c *Conn, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
 	msgType := data[0]
 	payload := data[1:]
 
@@ -53,22 +63,27 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 		return
 	}
 
+	// Đổi map — cleanup state cũ + tạo skeleton mới.
 	if c.mapID != m.MapID {
-		h.log.Info("conn changing map via move", "userID", c.userID, "from", c.mapID, "to", m.MapID)
+		h.log.Info("conn changing map", "userID", c.userID, "from", c.mapID, "to", m.MapID)
+
+		if oldMS, ok := h.manager.GetMap(c.mapID); ok {
+			oldMS.RemovePlayer(c.userID)
+		}
+
 		h.hub.MoveToRoom(c, m.MapID)
+
+		newMS := h.manager.GetOrCreateMap(m.MapID)
+		newMS.AddPlayerSkeleton(c.userID)
 	}
 
-	// === BROADCAST NGAY — không chờ Redis ===
-	// Pattern: hot path không block trên I/O không critical.
-	// Redis chỉ phục vụ NestJS đọc state (mapSnapshot, getValidSession),
-	// trễ vài ms không ảnh hưởng gameplay.
-	syncPacket := player.BuildSyncPacket(c.userID, &m)
-	h.hub.BroadcastToMap(m.MapID, syncPacket, c)
+	// Update state — KHÔNG broadcast. Tick loop sẽ broadcast.
+	ms := h.manager.GetOrCreateMap(m.MapID)
+	ms.UpdateFromMove(c.userID, &m)
 
-	// === FIRE-AND-FORGET Redis update ===
-	// Spawn goroutine cho mỗi update.
-	// Goroutine ở Go RẺ (~2KB stack), không phải lo overhead như tạo thread.
-	// Context timeout 1s — Redis chậm hơn → drop request đó, không backlog.
+	// Redis update vẫn fire-and-forget per packet.
+	// TODO Phase 2: tick loop có thể batch update Redis 1 lần thay vì per-packet,
+	// dùng pipeline gom 100 player vào 1 round-trip.
 	go func(userID int32, move messages.PlayerMove) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
