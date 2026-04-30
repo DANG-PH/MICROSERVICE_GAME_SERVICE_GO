@@ -19,6 +19,8 @@ type Config struct {
 	// Set USE_NATS=true để switch sang NATS — performance tốt hơn nhưng cần deploy NATS server.
 	UseNATS bool
 	NATSURL string
+	// Tick Rate
+	TickRate int
 }
 
 // Load đọc env vars. Trả về error nếu thiếu config bắt buộc.
@@ -31,6 +33,7 @@ func Load() (*Config, error) {
 		LogLevel:  getEnv("LOG_LEVEL", "info"),
 		UseNATS:   getEnvBool("USE_NATS", false),
 		NATSURL:   getEnv("NATS_URL", "nats://localhost:4222"),
+		TickRate:  getEnvInt("TICK_RATE", 20),
 	}
 
 	if cfg.JWTSecret == "" {

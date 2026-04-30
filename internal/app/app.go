@@ -12,6 +12,7 @@ import (
 	"github.com/DANG-PH/game-service-go/internal/transport/ws"
 
 	"github.com/DANG-PH/game-service-go/internal/game/player"
+	"github.com/DANG-PH/game-service-go/internal/game/state"
 
 	"github.com/DANG-PH/game-service-go/internal/config"
 )
@@ -22,7 +23,7 @@ type App struct {
 	log    *slog.Logger
 	server *http.Server
 	bus    ws.BusInterface // cross-instance message bus, cần Stop() khi shutdown
-	// ticker *ws.Ticker
+	ticker *ws.Ticker
 }
 
 // New khởi tạo app: load deps, wire components.
@@ -48,8 +49,8 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	}
 
 	// State manager — lưu snapshot mới nhất của mọi player theo map.
-	// Tick loop sẽ đọc state này để broadcast 20Hz.
-	// stateManager := state.NewManager()
+	// Tick loop sẽ đọc state này để broadcast.
+	stateManager := state.NewManager()
 
 	// Hub - quản lý WebSocket connections, wire bus để broadcast cross-instance.
 	hub := ws.NewHub(log, bus)
@@ -64,7 +65,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	handler := ws.NewHandler(
 		log,
 		hub,
-		// stateManager,
+		stateManager,
 		playerService,
 	)
 
@@ -73,7 +74,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	//   - Dev: 100ms (đỡ noisy log)
 	//   - Prod: 50ms (smooth gameplay)
 	//   - Stress test: 33ms (30Hz)
-	// ticker := ws.NewTicker(log, hub, stateManager, 50*time.Millisecond)
+	ticker := ws.NewTicker(log, hub, stateManager, time.Second/time.Duration(cfg.TickRate))
 
 	// WebSocket server - HTTP upgrade endpoint.
 	wsServer := ws.NewServer(log, hub, auth, handler)
@@ -104,7 +105,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		log:    log,
 		server: server,
 		bus:    bus,
-		// ticker: ticker,
+		ticker: ticker,
 	}, nil
 }
 
@@ -117,7 +118,7 @@ func (a *App) Run() error {
 		return fmt.Errorf("start bus: %w", err)
 	}
 
-	// a.ticker.Start(context.Background())
+	a.ticker.Start(context.Background())
 	a.log.Info("tick loop started")
 
 	a.log.Info("server starting", "port", a.cfg.HTTPPort, "nodeID", a.bus.NodeID())
@@ -148,7 +149,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 		a.log.Warn("http server shutdown error", "err", err)
 	}
 
-	// a.ticker.Stop()
+	a.ticker.Stop()
 	a.log.Info("tick loop stopped")
 
 	a.bus.Stop()
