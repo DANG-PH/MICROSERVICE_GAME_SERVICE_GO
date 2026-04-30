@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/DANG-PH/game-service-go/internal/game/state"
+	"github.com/DANG-PH/game-service-go/internal/shared/messages"
 )
 
 type Ticker struct {
@@ -80,18 +81,18 @@ func (t *Ticker) tick() {
 			continue
 		}
 
+		// Gom tất cả dirty players → 1 packet → broadcast 1 lần
+		// O(conns_per_map) thay vì O(dirty × conns_per_map)
+		syncs := make([]messages.PlayerSync, len(dirty))
 		for i := range dirty {
-			p := &dirty[i]
-			sync := p.ToSync()
-			packet := sync.Encode()
-
-			// Để giữ parity NestJS (exclude chính chủ): bạn cần lookup conn theo UserID
-			// rồi pass vào BroadcastToMap. Hiện tại conn lookup nằm trong Hub:
-			//   hub.BroadcastToMapExcludeUser(ms.MapID, packet, p.UserID)
-			// Mình thêm helper này dưới.
-			t.hub.BroadcastToMapExcludeUser(ms.MapID, packet, p.UserID)
-			totalPackets++
+			syncs[i] = *dirty[i].ToSync()
 		}
+
+		batch := &messages.PlayerSyncBatch{Players: syncs}
+		packet := batch.Encode()
+
+		t.hub.BroadcastToMap(ms.MapID, packet, nil) // nil = không exclude ai
+		totalPackets++
 	}
 
 	elapsed := time.Since(start)

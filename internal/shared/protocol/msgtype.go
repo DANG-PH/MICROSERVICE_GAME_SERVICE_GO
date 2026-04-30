@@ -61,9 +61,10 @@ const (
 	// Bắt đầu từ 0x80 vì đây là điểm bit đầu tiên chuyển từ 0 → 1.
 	// 0x80, 0x81, 0x82 đặt cạnh nhau để các message liên quan (handshake flow)
 	// nằm gần nhau — dễ tìm trong code và trong hexdump.
-	MsgHandshakeAck  uint8 = 0x80 // accept handshake
-	MsgHandshakeNack uint8 = 0x81 // reject handshake (version mismatch, auth fail)
-	MsgPlayerSync    uint8 = 0x82 // broadcast move của player khác
+	MsgHandshakeAck    uint8 = 0x80 // accept handshake
+	MsgHandshakeNack   uint8 = 0x81 // reject handshake (version mismatch, auth fail)
+	MsgPlayerSync      uint8 = 0x82 // broadcast move của player khác
+	MsgPlayerSyncBatch uint8 = 0x83 // broadcast tickrate toàn map
 
 	// 0xFF = 1111 1111 — tất cả bit đều bật, dễ nhận ra trong hexdump.
 	// Dùng cho error vì nhìn vào là thấy ngay "có gì đó sai".

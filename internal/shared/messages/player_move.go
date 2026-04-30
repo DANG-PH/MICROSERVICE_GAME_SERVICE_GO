@@ -180,3 +180,47 @@ func (m *PlayerSync) Encode() []byte {
 	_ = enc.WriteString(m.Avatar)
 	return enc.Bytes()
 }
+
+// PlayerSyncBatch — server gửi toàn bộ dirty players trong 1 packet.
+//
+// Format:
+//
+//	[0x83]         msgType (1 byte)
+//	[uint16]       count   (2 bytes) — số lượng player
+//	[PlayerSync]×N          — từng player, layout giống PlayerSync
+//
+// Tại sao uint16 cho count? Lý thuyết 1 map có tối đa 65535 player —
+// uint8 chỉ được 255, quá thấp. uint16 = 2 bytes, chấp nhận được.
+type PlayerSyncBatch struct {
+	Players []PlayerSync
+}
+
+func (b *PlayerSyncBatch) Encode() []byte {
+	enc := protocol.NewEncoder(protocol.MsgPlayerSyncBatch)
+	enc.WriteUint16(uint16(len(b.Players)))
+	for i := range b.Players {
+		p := &b.Players[i]
+		enc.WriteInt32(p.UserID)
+		enc.WriteFloat32(p.X)
+		enc.WriteFloat32(p.Y)
+		enc.WriteUint8(p.Trangthai)
+		enc.WriteInt8(p.Dir)
+		_ = enc.WriteString(p.Dau)
+		_ = enc.WriteString(p.Than)
+		_ = enc.WriteString(p.Chan)
+		enc.WriteFloat32(p.TimeChoHienBay)
+		enc.WriteFloat32(p.LechDauX)
+		enc.WriteFloat32(p.LechDauY)
+		enc.WriteFloat32(p.LechThanX)
+		enc.WriteFloat32(p.LechThanY)
+		enc.WriteFloat32(p.LechChanX)
+		enc.WriteFloat32(p.LechChanY)
+		enc.WriteUint16(p.FrameVanBay)
+		enc.WriteBool(p.DangMangVanBay)
+		_ = enc.WriteString(p.TenVanBay)
+		enc.WriteFloat32(p.Rong)
+		enc.WriteFloat32(p.Cao)
+		_ = enc.WriteString(p.Avatar)
+	}
+	return enc.Bytes()
+}

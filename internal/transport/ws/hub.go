@@ -32,7 +32,30 @@ type Hub struct {
 	mu          sync.RWMutex
 	connsByUser map[int32]*Conn
 	roomsByMap  map[string]map[*Conn]struct{}
+
+	// Worker pool cho NATS publish
+	publishCh chan publishJob
 }
+
+type publishJob struct {
+	kind          publishKind
+	mapID         string
+	data          []byte
+	excludeUserID int32
+	userID        int32 // dùng cho kick
+}
+
+type publishKind uint8
+
+const (
+	publishBroadcast publishKind = iota
+	publishKick
+)
+
+const (
+	publishWorkers   = 4    // số worker goroutine
+	publishChBufSize = 1024 // buffer size — drop nếu đầy
+)
 
 // Compile-time check: Hub phải satisfy BusHandler interface.
 // Nếu thiếu method OnBroadcast/OnSendToUser/OnKickUser → compile error tại đây,
@@ -60,6 +83,10 @@ func NewHub(log *slog.Logger, bus BusInterface) *Hub {
 		// Wire 1 dòng: hub self-register làm handler của bus.
 		// Khi bus nhận message cross-instance → gọi h.OnBroadcast/OnSendToUser/OnKickUser.
 		bus.SetHandler(h)
+
+		for i := 0; i < publishWorkers; i++ {
+			go h.publishWorker()
+		}
 	}
 
 	return h
@@ -135,30 +162,44 @@ func (h *Hub) BroadcastToMapExcludeUser(mapID string, data []byte, excludeUserID
 	h.OnBroadcast(mapID, data, excludeUserID)
 
 	// Cross-instance
-	if h.bus != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
-			if err := h.bus.PublishBroadcast(ctx, mapID, data, excludeUserID); err != nil {
-				h.log.Warn("publish broadcast failed", "err", err, "mapID", mapID)
-			}
-		}()
-	}
+
+	// Tạo go mỗi lần GC có Overhead, dùng pool goroutine + buffer channel để tối ưu phần này
+	// if h.bus != nil {
+	// 	go func() {
+	// 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	// 		defer cancel()
+	// 		if err := h.bus.PublishBroadcast(ctx, mapID, data, excludeUserID); err != nil {
+	// 			h.log.Warn("publish broadcast failed", "err", err, "mapID", mapID)
+	// 		}
+	// 	}()
+	// }
+
+	h.enqueue(publishJob{
+		kind:          publishBroadcast,
+		mapID:         mapID,
+		data:          data,
+		excludeUserID: excludeUserID,
+	})
 }
 
 // KickUser kick user dù họ đang ở instance nào.
 // Dùng khi: register conn mới mà thấy user đã có conn cũ ở instance khác.
 func (h *Hub) KickUser(userID int32) {
 	h.OnKickUser(userID) // local
-	if h.bus != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
-			if err := h.bus.PublishKickUser(ctx, userID); err != nil {
-				h.log.Warn("publish kick failed", "err", err, "userID", userID)
-			}
-		}()
-	}
+	// if h.bus != nil {
+	// 	go func() {
+	// 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	// 		defer cancel()
+	// 		if err := h.bus.PublishKickUser(ctx, userID); err != nil {
+	// 			h.log.Warn("publish kick failed", "err", err, "userID", userID)
+	// 		}
+	// 	}()
+	// }
+
+	h.enqueue(publishJob{
+		kind:   publishKick,
+		userID: userID,
+	})
 }
 
 // === REGISTER/UNREGISTER — sửa nhẹ để dùng cross-instance kick ===
@@ -184,15 +225,19 @@ func (h *Hub) register(c *Conn) {
 	// Kick conn cũ ở instance KHÁC nếu có.
 	// Note: cũng publish kể cả khi đã kick local — vì user có thể có conn ở cả 2 instance.
 	// Bus sẽ skip echo về chính mình.
-	if h.bus != nil {
-		go func(uid int32) {
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
-			if err := h.bus.PublishKickUser(ctx, uid); err != nil {
-				h.log.Warn("publish kick on register failed", "err", err)
-			}
-		}(c.userID)
-	}
+	// if h.bus != nil {
+	// 	go func(uid int32) {
+	// 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	// 		defer cancel()
+	// 		if err := h.bus.PublishKickUser(ctx, uid); err != nil {
+	// 			h.log.Warn("publish kick on register failed", "err", err)
+	// 		}
+	// 	}(c.userID)
+	// }
+	h.enqueue(publishJob{
+		kind:   publishKick,
+		userID: c.userID,
+	})
 
 	h.log.Info("conn registered", "userID", c.userID, "mapID", c.mapID)
 }
@@ -251,4 +296,39 @@ func (h *Hub) Stats() (totalConns int, totalRooms int) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.connsByUser), len(h.roomsByMap)
+}
+
+func (h *Hub) publishWorker() {
+	for job := range h.publishCh {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		switch job.kind {
+		case publishBroadcast:
+			if err := h.bus.PublishBroadcast(ctx, job.mapID, job.data, job.excludeUserID); err != nil {
+				h.log.Warn("publish broadcast failed", "err", err, "mapID", job.mapID)
+			}
+		case publishKick:
+			if err := h.bus.PublishKickUser(ctx, job.userID); err != nil {
+				h.log.Warn("publish kick failed", "err", err, "userID", job.userID)
+			}
+		}
+		cancel()
+	}
+}
+
+func (h *Hub) enqueue(job publishJob) {
+	if h.bus == nil {
+		return
+	}
+	select {
+	case h.publishCh <- job:
+	default:
+		// Channel đầy → drop, không block tick loop
+		h.log.Warn("publish channel full, dropping", "kind", job.kind, "mapID", job.mapID)
+	}
+}
+
+func (h *Hub) Close() {
+	if h.publishCh != nil {
+		close(h.publishCh) // worker tự thoát khi channel closed
+	}
 }

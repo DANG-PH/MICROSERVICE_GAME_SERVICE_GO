@@ -24,6 +24,7 @@ type App struct {
 	server *http.Server
 	bus    ws.BusInterface // cross-instance message bus, cần Stop() khi shutdown
 	ticker *ws.Ticker
+	hub    *ws.Hub
 }
 
 // New khởi tạo app: load deps, wire components.
@@ -106,6 +107,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		server: server,
 		bus:    bus,
 		ticker: ticker,
+		hub:    hub,
 	}, nil
 }
 
@@ -154,5 +156,10 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 	a.bus.Stop()
 	a.log.Info("bus stopped")
+
+	// Hub close sau cùng để đảm bảo worker drain hết job NATS còn trong channel trước khi thoát.
+	a.hub.Close() // drain publish channel, worker tự thoát
+	a.log.Info("hub closed")
+
 	return nil
 }
