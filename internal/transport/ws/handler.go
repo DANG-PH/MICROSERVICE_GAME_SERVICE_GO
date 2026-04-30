@@ -3,25 +3,27 @@ package ws
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/DANG-PH/game-service-go/internal/game/player"
 	"github.com/DANG-PH/game-service-go/internal/game/state"
-	"github.com/DANG-PH/game-service-go/internal/shared/enums"
 	"github.com/DANG-PH/game-service-go/internal/shared/messages"
 	"github.com/DANG-PH/game-service-go/internal/shared/protocol"
 )
 
+// Handler là nơi route message theo msgType byte đầu tiên.
+// Mỗi msgType có 1 case xử lý riêng.
+//
+// Pattern này gọi là "dispatcher" — đơn giản, dễ đọc, không cần reflection.
+// Khi thêm message mới: thêm const ở protocol/msgtype.go, thêm case ở đây, tạo file message struct.
+// - KHÔNG broadcast trực tiếp — chỉ update state.
+// - Tick loop sẽ broadcast 20Hz.
+// - Vẫn giữ Redis update (cần cho NestJS đọc + cron flush DB).
 type Handler struct {
 	log           *slog.Logger
 	hub           *Hub
 	manager       *state.Manager
 	playerService *player.Service
-
-	// === DEBUG ===
-	debugLastReceivedTime map[int32]int64
-	debugMu               sync.Mutex
 }
 
 func NewHandler(log *slog.Logger,
@@ -30,14 +32,17 @@ func NewHandler(log *slog.Logger,
 	ps *player.Service,
 ) *Handler {
 	return &Handler{
-		log:                   log,
-		hub:                   hub,
-		manager:               manager,
-		playerService:         ps,
-		debugLastReceivedTime: make(map[int32]int64),
+		log:           log,
+		hub:           hub,
+		manager:       manager,
+		playerService: ps,
 	}
 }
 
+// Handle implement MessageHandler interface.
+// Được gọi từ Conn.readLoop mỗi khi có message từ client.
+//
+// data[0] = msgType, data[1:] = payload.
 func (h *Handler) Handle(c *Conn, data []byte) {
 	if len(data) == 0 {
 		return
@@ -62,46 +67,39 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 		return
 	}
 
-	// === DEBUG: log gap giữa các PlayerMove từ cùng userID ===
-	now := time.Now().UnixMilli()
-	h.debugMu.Lock()
-	lastTime := h.debugLastReceivedTime[c.userID]
-	h.debugLastReceivedTime[c.userID] = now
-	h.debugMu.Unlock()
-
-	gap := now - lastTime
-	if lastTime == 0 {
-		gap = -1
-	}
-
-	// Chỉ log khi gap > 200ms (bình thường gap = 100ms)
-	// hoặc -1 (lần đầu)
-	if gap > 200 || gap == -1 {
-		h.log.Info("PlayerMove received (gap large)",
-			"userID", c.userID,
-			"x", m.X,
-			"y", m.Y,
-			"trangthai", enums.TrangthaiToString(m.Trangthai),
-			"gap_ms", gap,
-		)
-	}
-
-	// Đổi map
+	// Đổi map — cleanup state cũ + chuyển room.
 	if c.mapID != m.MapID {
-		h.log.Info("conn changing map", "userID", c.userID, "from", c.mapID, "to", m.MapID)
-
 		if c.mapID != "" {
-			h.manager.RemovePlayerFromMap(c.mapID, c.userID)
+			h.manager.RemovePlayerFromMap(c.mapID, c.userID) // tự cleanup empty map
 		}
-
 		h.hub.MoveToRoom(c, m.MapID)
-		c.mapID = m.MapID
 	}
 
+	// Update state — UpdateFromMove tự tạo entry nếu chưa có.
+	// Tick loop sẽ broadcast (KHÔNG broadcast ở đây).
 	ms := h.manager.GetOrCreateMap(m.MapID)
 	ms.UpdateFromMove(c.userID, &m)
 
-	// Redis update — fire-and-forget per packet
+	// Redis update — fire-and-forget per packet.
+	//
+	// Tại sao cần go ở đây?
+	//   ─ readLoop gọi handler tuần tự, nếu block ở Redis (50-200ms)
+	//     thì packet kế tiếp phải chờ → gameplay lag.
+	//   ─ Client gửi 10-20 move packet/giây, không thể chờ Redis.
+	//
+	// Goroutine cho phép:
+	//   ─ Hot path (update state in-memory + tick broadcast) chạy < 1ms
+	//   ─ Redis update chạy ngầm, không ảnh hưởng latency
+	//
+	// TODO Phase 2:
+	//   ─ Bounded queue + worker dedicated thay vì per-packet goroutine
+	//     (chống goroutine leak khi Redis chậm + spam packet)
+	//   ─ Batch Redis update trong tick loop, dùng pipeline
+	//     gom nhiều player vào 1 round-trip
+	//
+	// Trade-off hiện tại: goroutine có thể ghi Redis state CŨ lên state MỚI
+	// nếu Redis chậm. Chấp nhận được vì Redis chỉ là snapshot cho NestJS,
+	// không ảnh hưởng gameplay (gameplay đọc từ in-memory MapState).
 	go func(userID int32, move messages.PlayerMove) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
