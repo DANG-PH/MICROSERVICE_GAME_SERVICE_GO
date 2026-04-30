@@ -53,8 +53,8 @@ const (
 )
 
 const (
-	publishWorkers   = 4    // số worker goroutine
-	publishChBufSize = 1024 // buffer size — drop nếu đầy
+	publishWorkers   = 16   // tăng từ 4 lên 16
+	publishChBufSize = 4096 // tăng từ 1024 lên 4096
 )
 
 // Compile-time check: Hub phải satisfy BusHandler interface.
@@ -77,6 +77,7 @@ func NewHub(log *slog.Logger, bus BusInterface) *Hub {
 		bus:         bus,
 		connsByUser: make(map[int32]*Conn),
 		roomsByMap:  make(map[string]map[*Conn]struct{}),
+		publishCh:   make(chan publishJob, publishChBufSize),
 	}
 
 	if bus != nil {
@@ -300,17 +301,25 @@ func (h *Hub) Stats() (totalConns int, totalRooms int) {
 
 func (h *Hub) publishWorker() {
 	for job := range h.publishCh {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond) // giảm từ 1s → 200ms
+		start := time.Now()
+
 		switch job.kind {
 		case publishBroadcast:
 			if err := h.bus.PublishBroadcast(ctx, job.mapID, job.data, job.excludeUserID); err != nil {
-				h.log.Warn("publish broadcast failed", "err", err, "mapID", job.mapID)
+				h.log.Warn("publish broadcast failed", "err", err, "mapID", job.mapID, "elapsed", time.Since(start))
 			}
 		case publishKick:
 			if err := h.bus.PublishKickUser(ctx, job.userID); err != nil {
-				h.log.Warn("publish kick failed", "err", err, "userID", job.userID)
+				h.log.Warn("publish kick failed", "err", err, "userID", job.userID, "elapsed", time.Since(start))
 			}
 		}
+
+		// Log nếu worker bị block quá lâu — đây là dấu hiệu NATS chậm/fail
+		if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+			h.log.Warn("publish worker slow — NATS latency cao?", "elapsed", elapsed, "kind", job.kind)
+		}
+
 		cancel()
 	}
 }
@@ -322,8 +331,11 @@ func (h *Hub) enqueue(job publishJob) {
 	select {
 	case h.publishCh <- job:
 	default:
-		// Channel đầy → drop, không block tick loop
-		h.log.Warn("publish channel full, dropping", "kind", job.kind, "mapID", job.mapID)
+		h.log.Warn("publish channel full, dropping",
+			"kind", job.kind,
+			"mapID", job.mapID,
+			"queueLen", len(h.publishCh),
+		)
 	}
 }
 
