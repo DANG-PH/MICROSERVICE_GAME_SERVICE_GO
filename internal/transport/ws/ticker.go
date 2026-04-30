@@ -16,6 +16,12 @@ type Ticker struct {
 
 	interval time.Duration
 	stopCh   chan struct{}
+
+	// === DEBUG STATS ===
+	debugTickCount      int64
+	debugBroadcastCount int64
+	debugSkipCount      int64
+	debugLastStatsTime  time.Time
 }
 
 func NewTicker(log *slog.Logger, hub *Hub, manager *state.Manager, interval time.Duration) *Ticker {
@@ -23,11 +29,12 @@ func NewTicker(log *slog.Logger, hub *Hub, manager *state.Manager, interval time
 		interval = 50 * time.Millisecond
 	}
 	return &Ticker{
-		log:      log,
-		hub:      hub,
-		manager:  manager,
-		interval: interval,
-		stopCh:   make(chan struct{}),
+		log:                log,
+		hub:                hub,
+		manager:            manager,
+		interval:           interval,
+		stopCh:             make(chan struct{}),
+		debugLastStatsTime: time.Now(),
 	}
 }
 
@@ -57,32 +64,34 @@ func (t *Ticker) run(ctx context.Context) {
 	}
 }
 
-// tick — mỗi 50ms.
-//
-// Pattern broadcast:
-// - Lấy dirty player từ mỗi map
-// - Mỗi player dirty → encode PlayerSync packet
-// - Broadcast packet đó tới tất cả conn trong map (KHÔNG exclude chính chủ)
-//
-// Tại sao broadcast cả về chính chủ?
-//   - Server-authoritative: client phải reconcile vị trí của chính mình theo server.
-//   - Nếu anti-cheat reject input → server không update state → tick không gửi → client tự
-//     biết là bị reject (snap về vị trí cũ).
-//   - Trong NestJS cũ exclude chính chủ vì pattern client.to() — đây là khác biệt có chủ ý
-//     khi chuyển sang server-authoritative.
 func (t *Ticker) tick() {
 	start := time.Now()
 	maps := t.manager.AllMaps()
 
 	totalPackets := 0
+	totalDirty := 0
+
 	for _, ms := range maps {
 		dirty := ms.CollectDirty()
 		if len(dirty) == 0 {
+			t.debugSkipCount++
 			continue
 		}
 
-		// Gom tất cả dirty players → 1 packet → broadcast 1 lần
-		// O(conns_per_map) thay vì O(dirty × conns_per_map)
+		totalDirty += len(dirty)
+
+		// === LOG MỖI BROADCAST (verbose) ===
+		// Comment lại sau khi debug xong vì log nhiều
+		userIDs := make([]int32, len(dirty))
+		for i, p := range dirty {
+			userIDs[i] = p.UserID
+		}
+		t.log.Info("tick broadcast",
+			"mapID", ms.MapID,
+			"dirtyCount", len(dirty),
+			"userIDs", userIDs,
+		)
+
 		syncs := make([]messages.PlayerSync, len(dirty))
 		for i := range dirty {
 			syncs[i] = *dirty[i].ToSync()
@@ -91,8 +100,26 @@ func (t *Ticker) tick() {
 		batch := &messages.PlayerSyncBatch{Players: syncs}
 		packet := batch.Encode()
 
-		t.hub.BroadcastToMap(ms.MapID, packet, nil) // nil = không exclude ai
+		t.hub.BroadcastToMap(ms.MapID, packet, nil)
 		totalPackets++
+		t.debugBroadcastCount++
+	}
+
+	t.debugTickCount++
+
+	// === STATS MỖI 5 GIÂY ===
+	now := time.Now()
+	if now.Sub(t.debugLastStatsTime) >= 5*time.Second {
+		t.log.Info("ticker stats over 5s",
+			"totalTicks", t.debugTickCount,
+			"broadcasts", t.debugBroadcastCount,
+			"skips", t.debugSkipCount,
+			"broadcastRate", float64(t.debugBroadcastCount)/float64(t.debugTickCount)*100,
+		)
+		t.debugTickCount = 0
+		t.debugBroadcastCount = 0
+		t.debugSkipCount = 0
+		t.debugLastStatsTime = now
 	}
 
 	elapsed := time.Since(start)
