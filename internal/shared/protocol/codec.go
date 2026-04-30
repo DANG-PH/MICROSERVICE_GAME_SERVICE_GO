@@ -111,6 +111,10 @@ func (e *Encoder) WriteInt32(v int32) {
 	e.buf = binary.BigEndian.AppendUint32(e.buf, uint32(v))
 }
 
+func (e *Encoder) WriteInt64(v int64) {
+	e.buf = binary.BigEndian.AppendUint64(e.buf, uint64(v))
+}
+
 // WriteFloat32 ghi tọa độ x, y của player vào packet (4 bytes).
 //
 // Float32 là gì?
@@ -249,6 +253,15 @@ func (d *Decoder) ReadUint32() (uint32, error) {
 func (d *Decoder) ReadInt32() (int32, error) {
 	v, err := d.ReadUint32()
 	return int32(v), err
+}
+
+func (d *Decoder) ReadInt64() (int64, error) {
+	if d.Remaining() < 8 {
+		return 0, ErrBufferTooShort
+	}
+	v := binary.BigEndian.Uint64(d.buf[d.pos:])
+	d.pos += 8
+	return int64(v), nil
 }
 
 // ReadFloat32 đọc 4 bytes rồi interpret là số thực float32.

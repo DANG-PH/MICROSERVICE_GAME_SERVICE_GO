@@ -84,8 +84,11 @@ func (t *Ticker) tick() {
 		// Gom tất cả dirty players → 1 packet → broadcast 1 lần
 		// O(conns_per_map) thay vì O(dirty × conns_per_map)
 		syncs := make([]messages.PlayerSync, len(dirty))
+		now := time.Now().UnixMilli()
 		for i := range dirty {
-			syncs[i] = *dirty[i].ToSync()
+			s := dirty[i].ToSync()
+			s.ServerTime = now
+			syncs[i] = *s
 		}
 
 		batch := &messages.PlayerSyncBatch{Players: syncs}

@@ -153,6 +153,7 @@ type PlayerSync struct {
 	Rong           float32
 	Cao            float32
 	Avatar         string
+	ServerTime     int64
 }
 
 func (m *PlayerSync) Encode() []byte {
@@ -221,6 +222,7 @@ func (b *PlayerSyncBatch) Encode() []byte {
 		enc.WriteFloat32(p.Rong)
 		enc.WriteFloat32(p.Cao)
 		_ = enc.WriteString(p.Avatar)
+		enc.WriteInt64(p.ServerTime)
 	}
 	return enc.Bytes()
 }
