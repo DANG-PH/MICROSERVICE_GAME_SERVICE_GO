@@ -1,3 +1,4 @@
+// internal/game/player/service.go
 package player
 
 import (
@@ -78,33 +79,4 @@ func (s *Service) HandleMove(ctx context.Context, userID int32, m *messages.Play
 
 	_, err := pipe.Exec(ctx)
 	return err
-}
-
-// BuildSyncPacket tạo PlayerSync packet để broadcast.
-// Tách hàm riêng để handler có thể tạo packet 1 lần và gửi tới nhiều conn.
-func BuildSyncPacket(userID int32, m *messages.PlayerMove) []byte {
-	sync := &messages.PlayerSync{
-		UserID:         userID,
-		X:              m.X,
-		Y:              m.Y,
-		Trangthai:      m.Trangthai,
-		Dir:            m.Dir,
-		Dau:            m.Dau,
-		Than:           m.Than,
-		Chan:           m.Chan,
-		TimeChoHienBay: m.TimeChoHienBay,
-		LechDauX:       m.LechDauX,
-		LechDauY:       m.LechDauY,
-		LechThanX:      m.LechThanX,
-		LechThanY:      m.LechThanY,
-		LechChanX:      m.LechChanX,
-		LechChanY:      m.LechChanY,
-		FrameVanBay:    m.FrameVanBay,
-		DangMangVanBay: m.DangMangVanBay,
-		TenVanBay:      m.TenVanBay,
-		Rong:           m.Rong,
-		Cao:            m.Cao,
-		Avatar:         m.Avatar,
-	}
-	return sync.Encode()
 }

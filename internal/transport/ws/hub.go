@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/DANG-PH/game-service-go/internal/game/state"
 )
 
 // Hub quản lý tất cả connection và phân loại theo map.
@@ -26,8 +28,9 @@ import (
 //   - OnSendToUser: instance khác gửi tới user → check user có ở instance này không
 //   - OnKickUser: instance khác bảo kick user → kick nếu user ở instance này
 type Hub struct {
-	log *slog.Logger
-	bus BusInterface // nil = single-instance mode (dev/test)
+	log     *slog.Logger
+	bus     BusInterface // nil = single-instance mode (dev/test)
+	manager *state.Manager
 
 	mu          sync.RWMutex
 	connsByUser map[int32]*Conn
@@ -71,10 +74,11 @@ const (
 var _ BusHandler = (*Hub)(nil)
 
 // NewHub — bus có thể nil (chạy single instance, ví dụ test).
-func NewHub(log *slog.Logger, bus BusInterface) *Hub {
+func NewHub(log *slog.Logger, bus BusInterface, manager *state.Manager) *Hub {
 	h := &Hub{
 		log:         log,
 		bus:         bus,
+		manager:     manager,
 		connsByUser: make(map[int32]*Conn),
 		roomsByMap:  make(map[string]map[*Conn]struct{}),
 		publishCh:   make(chan publishJob, publishChBufSize),
@@ -245,15 +249,25 @@ func (h *Hub) register(c *Conn) {
 
 // unregister gọi khi conn close (read loop return).
 func (h *Hub) unregister(c *Conn) {
+	var needCleanup bool
+	var mapID string
+
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	// Chỉ xóa nếu conn này vẫn là conn đang active của user
-	// (tránh case kick xảy ra: oldConn.unregister() chạy SAU newConn.register()
-	// → sẽ vô tình xóa newConn ra khỏi map).
 	if existing, ok := h.connsByUser[c.userID]; ok && existing == c {
 		delete(h.connsByUser, c.userID)
 	}
 	h.removeFromRoomLocked(c)
+
+	if c.mapID != "" && h.manager != nil {
+		needCleanup = true
+		mapID = c.mapID
+	}
+	h.mu.Unlock()
+
+	// Cleanup ngoài lock — tránh nested lock
+	if needCleanup {
+		h.manager.RemovePlayerFromMap(mapID, c.userID)
+	}
 }
 
 // MoveToRoom đổi map của conn. Gọi khi NestJS bắn event setMap qua Redis pub/sub

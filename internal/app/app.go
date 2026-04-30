@@ -54,7 +54,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	stateManager := state.NewManager()
 
 	// Hub - quản lý WebSocket connections, wire bus để broadcast cross-instance.
-	hub := ws.NewHub(log, bus)
+	hub := ws.NewHub(log, bus, stateManager)
 
 	// Auth - verify JWT + gameSession.
 	auth := ws.NewAuthenticator(cfg.JWTSecret, rdb)

@@ -67,27 +67,39 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 		return
 	}
 
-	// Đổi map — cleanup state cũ + tạo skeleton mới.
+	// Đổi map — cleanup state cũ + chuyển room.
 	if c.mapID != m.MapID {
-		h.log.Info("conn changing map", "userID", c.userID, "from", c.mapID, "to", m.MapID)
-
-		if oldMS, ok := h.manager.GetMap(c.mapID); ok {
-			oldMS.RemovePlayer(c.userID)
+		if c.mapID != "" {
+			h.manager.RemovePlayerFromMap(c.mapID, c.userID) // tự cleanup empty map
 		}
-
 		h.hub.MoveToRoom(c, m.MapID)
-
-		newMS := h.manager.GetOrCreateMap(m.MapID)
-		newMS.AddPlayerSkeleton(c.userID)
 	}
 
-	// Update state — KHÔNG broadcast. Tick loop sẽ broadcast.
+	// Update state — UpdateFromMove tự tạo entry nếu chưa có.
+	// Tick loop sẽ broadcast (KHÔNG broadcast ở đây).
 	ms := h.manager.GetOrCreateMap(m.MapID)
 	ms.UpdateFromMove(c.userID, &m)
 
-	// Redis update vẫn fire-and-forget per packet.
-	// TODO Phase 2: tick loop có thể batch update Redis 1 lần thay vì per-packet,
-	// dùng pipeline gom 100 player vào 1 round-trip.
+	// Redis update — fire-and-forget per packet.
+	//
+	// Tại sao cần go ở đây?
+	//   ─ readLoop gọi handler tuần tự, nếu block ở Redis (50-200ms)
+	//     thì packet kế tiếp phải chờ → gameplay lag.
+	//   ─ Client gửi 10-20 move packet/giây, không thể chờ Redis.
+	//
+	// Goroutine cho phép:
+	//   ─ Hot path (update state in-memory + tick broadcast) chạy < 1ms
+	//   ─ Redis update chạy ngầm, không ảnh hưởng latency
+	//
+	// TODO Phase 2:
+	//   ─ Bounded queue + worker dedicated thay vì per-packet goroutine
+	//     (chống goroutine leak khi Redis chậm + spam packet)
+	//   ─ Batch Redis update trong tick loop, dùng pipeline
+	//     gom nhiều player vào 1 round-trip
+	//
+	// Trade-off hiện tại: goroutine có thể ghi Redis state CŨ lên state MỚI
+	// nếu Redis chậm. Chấp nhận được vì Redis chỉ là snapshot cho NestJS,
+	// không ảnh hưởng gameplay (gameplay đọc từ in-memory MapState).
 	go func(userID int32, move messages.PlayerMove) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
@@ -95,21 +107,4 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 			h.log.Warn("redis update failed", "err", err, "userID", userID)
 		}
 	}(c.userID, m)
-
-	// Tại sao cần go ở đây?
-	// client không đợi response. Nhưng readLoop mới là người đợi:
-	// readLoop gọi handler.Handle(c, data)
-	// 	→ handlePlayerMove chạy
-	// 	→ nếu không có go: block ở Redis update (có thể 50-200ms)
-	// 	→ trong thời gian đó readLoop KHÔNG đọc packet mới
-	// 	→ client gửi tiếp 10 move packet → tất cả nằm chờ trong TCP buffer
-	// 	→ gameplay bị lag
-	// Có go:
-	// 	→ broadcast ngay (< 1ms)
-	// 	→ Redis update chạy ngầm
-	// 	→ readLoop tiếp tục đọc packet mới ngay lập tức
-	// Game realtime mỗi giây có thể có hàng chục move packet — block readLoop dù 50ms cũng ảnh hưởng gameplay.
-	// TODO: goroutine per-packet có thể ghi đè state cũ lên state mới nếu Redis chậm.
-	// Chấp nhận được vì Redis chỉ là snapshot cho NestJS đọc, không ảnh hưởng gameplay.
-	// Fix nếu NestJS cần Redis chính xác tuyệt đối.
 }
