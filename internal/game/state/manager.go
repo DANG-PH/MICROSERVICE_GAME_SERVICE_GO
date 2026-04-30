@@ -146,11 +146,7 @@ func (ms *MapState) UpdateFromMove(userID int32, m *messages.PlayerMove) {
 
 	p, ok := ms.players[userID]
 	if !ok {
-		p = &PlayerState{
-			UserID: userID,
-			MapID:  ms.MapID,
-		}
-		ms.players[userID] = p
+		return
 	}
 
 	p.X = m.X
@@ -175,6 +171,12 @@ func (ms *MapState) UpdateFromMove(userID int32, m *messages.PlayerMove) {
 	p.Avatar = m.Avatar
 	p.UpdatedAt = now
 	p.Dirty = true
+}
+
+func (ms *MapState) IsEmpty() bool {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	return len(ms.players) == 0
 }
 
 // AddPlayerSkeleton tạo entry rỗng khi user vào map nhưng chưa gửi move nào.
@@ -204,13 +206,30 @@ func (ms *MapState) RemovePlayer(userID int32) bool {
 	return true
 }
 
+func (m *Manager) RemovePlayerFromMap(mapID string, userID int32) {
+	ms, ok := m.GetMap(mapID)
+	if !ok {
+		return
+	}
+	ms.RemovePlayer(userID)
+
+	if ms.IsEmpty() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		// Double-check sau khi acquire write lock
+		if ms.IsEmpty() {
+			delete(m.maps, mapID)
+		}
+	}
+}
+
 // CollectDirty trả về snapshot copy của các player dirty và reset flag.
 // Trả copy by value để giữ ngoài lock vẫn an toàn.
 func (ms *MapState) CollectDirty() []PlayerState {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
-	var dirty []PlayerState
+	dirty := make([]PlayerState, 0, len(ms.players))
 	for _, p := range ms.players {
 		if p.Dirty {
 			dirty = append(dirty, *p)
