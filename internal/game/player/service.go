@@ -69,7 +69,6 @@ func (s *Service) HandleMove(ctx context.Context, userID int32, m *messages.Play
 		"lechThanY":      strconv.FormatFloat(float64(m.LechThanY), 'f', -1, 32),
 		"lechChanX":      strconv.FormatFloat(float64(m.LechChanX), 'f', -1, 32),
 		"lechChanY":      strconv.FormatFloat(float64(m.LechChanY), 'f', -1, 32),
-		"frameVanBay":    int(m.FrameVanBay),
 		"dangMangVanBay": m.DangMangVanBay,
 		"tenVanBay":      m.TenVanBay,
 		"rong":           strconv.FormatFloat(float64(m.Rong), 'f', -1, 32),

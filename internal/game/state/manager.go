@@ -35,7 +35,6 @@ type PlayerState struct {
 	LechThanY      float32
 	LechChanX      float32
 	LechChanY      float32
-	FrameVanBay    uint16
 	DangMangVanBay bool
 	TenVanBay      string
 	Rong           float32
@@ -74,7 +73,6 @@ func (p *PlayerState) ToSync() *messages.PlayerSync {
 		LechThanY:      p.LechThanY,
 		LechChanX:      p.LechChanX,
 		LechChanY:      p.LechChanY,
-		FrameVanBay:    p.FrameVanBay,
 		DangMangVanBay: p.DangMangVanBay,
 		TenVanBay:      p.TenVanBay,
 		Rong:           p.Rong,
@@ -162,7 +160,6 @@ func (ms *MapState) UpdateFromMove(userID int32, m *messages.PlayerMove) {
 	p.LechThanY = m.LechThanY
 	p.LechChanX = m.LechChanX
 	p.LechChanY = m.LechChanY
-	p.FrameVanBay = m.FrameVanBay
 	p.DangMangVanBay = m.DangMangVanBay
 	p.TenVanBay = m.TenVanBay
 	p.Rong = m.Rong

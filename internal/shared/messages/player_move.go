@@ -27,7 +27,6 @@ import (
 //	[float32] lechThanY    4 bytes
 //	[float32] lechChanX    4 bytes
 //	[float32] lechChanY    4 bytes
-//	[uint16]  frameVanBay  2 bytes
 //	[bool]    dangMangVanBay 1 byte
 //	[string]  tenVanBay    2 + N bytes
 //	[float32] rong         4 bytes
@@ -51,7 +50,6 @@ type PlayerMove struct {
 	LechThanY      float32
 	LechChanX      float32
 	LechChanY      float32
-	FrameVanBay    uint16
 	DangMangVanBay bool
 	TenVanBay      string
 	Rong           float32
@@ -108,9 +106,6 @@ func (m *PlayerMove) Decode(data []byte) error {
 	if m.LechChanY, err = d.ReadFloat32(); err != nil {
 		return err
 	}
-	if m.FrameVanBay, err = d.ReadUint16(); err != nil {
-		return err
-	}
 	if m.DangMangVanBay, err = d.ReadBool(); err != nil {
 		return err
 	}
@@ -147,7 +142,6 @@ type PlayerSync struct {
 	LechThanY      float32
 	LechChanX      float32
 	LechChanY      float32
-	FrameVanBay    uint16
 	DangMangVanBay bool
 	TenVanBay      string
 	Rong           float32
@@ -173,7 +167,6 @@ func (m *PlayerSync) Encode() []byte {
 	enc.WriteFloat32(m.LechThanY)
 	enc.WriteFloat32(m.LechChanX)
 	enc.WriteFloat32(m.LechChanY)
-	enc.WriteUint16(m.FrameVanBay)
 	enc.WriteBool(m.DangMangVanBay)
 	_ = enc.WriteString(m.TenVanBay)
 	enc.WriteFloat32(m.Rong)
@@ -216,7 +209,6 @@ func (b *PlayerSyncBatch) Encode() []byte {
 		enc.WriteFloat32(p.LechThanY)
 		enc.WriteFloat32(p.LechChanX)
 		enc.WriteFloat32(p.LechChanY)
-		enc.WriteUint16(p.FrameVanBay)
 		enc.WriteBool(p.DangMangVanBay)
 		_ = enc.WriteString(p.TenVanBay)
 		enc.WriteFloat32(p.Rong)
