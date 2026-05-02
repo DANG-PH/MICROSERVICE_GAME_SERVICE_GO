@@ -408,3 +408,15 @@ func (m *Manager) RemovePlayerFromMap(mapID string, userID int32) {
 		}
 	}
 }
+
+// Xem player có tồn tại trên map nữa không
+func (m *Manager) PlayerExistsInMap(mapID string, userID int32) bool {
+	ms, ok := m.GetMap(mapID)
+	if !ok {
+		return false
+	}
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	_, exists := ms.players[userID]
+	return exists
+}

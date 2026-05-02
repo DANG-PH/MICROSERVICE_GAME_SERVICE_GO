@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -436,6 +437,38 @@ func (b *NATSBus) publish(subject string, msgType byte, body []byte) error {
 	payload = append(payload, msgType)
 	payload = append(payload, body...)
 	return b.nc.Publish(subject, payload)
+}
+
+// Start() chỉ subscribe INTERNAL subjects — các subject dùng cho
+// cross-instance communication giữa các Go instance với nhau.
+//
+// EXTERNAL subjects (từ service khác như NestJS) KHÔNG subscribe ở đây vì:
+//   - Bus không biết logic xử lý của từng subject
+//   - Coupling Bus với Hub/Manager là sai trách nhiệm
+//   - Caller tự subscribe qua method riêng (vd: SubscribePlayerDisconnect)
+//
+// Khi thêm subject mới:
+//   - Go→Go cross-instance → thêm vào Start() + dispatch()
+//   - NestJS→Go           → thêm method Subscribe* mới vào interface
+func (b *NATSBus) SubscribePlayerDisconnect(handler func(userID int32, mapID string)) error {
+	sub, err := b.nc.Subscribe("player.disconnected", func(m *nats.Msg) {
+		var payload struct {
+			UserID int32  `json:"userId"`
+			Map    string `json:"map"`
+		}
+		if err := json.Unmarshal(m.Data, &payload); err != nil {
+			b.log.Warn("decode player.disconnected failed", "err", err)
+			return
+		}
+		handler(payload.UserID, payload.Map)
+	})
+	if err != nil {
+		return fmt.Errorf("subscribe player.disconnected: %w", err)
+	}
+	b.mu.Lock()
+	b.subs = append(b.subs, sub)
+	b.mu.Unlock()
+	return nil
 }
 
 // Encode/decode functions — KHÔNG CẦN copy lại.

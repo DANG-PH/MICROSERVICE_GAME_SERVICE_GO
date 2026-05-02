@@ -93,6 +93,10 @@ func NewHub(log *slog.Logger, bus bus.BusInterface, manager *state.Manager) *Hub
 		for i := 0; i < publishWorkers; i++ {
 			go h.publishWorker()
 		}
+
+		bus.SubscribePlayerDisconnect(func(userID int32, mapID string) {
+			h.manager.RemovePlayerFromMap(mapID, userID)
+		})
 	}
 
 	return h

@@ -94,6 +94,11 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 		return
 	}
 
+	// Tránh việc NestJS disconnect rồi mà Go vẫn chạy move được
+	if !h.manager.PlayerExistsInMap(m.MapID, c.userID) {
+		return
+	}
+
 	var ms *state.MapState
 	if c.mapID != m.MapID {
 		ms = h.switchMap(c, m.MapID) // atomic từ góc nhìn handler

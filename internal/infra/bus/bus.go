@@ -279,6 +279,10 @@ func (b *Bus) publish(ctx context.Context, channel string, msgType byte, body []
 	return b.pub.Publish(ctx, channel, payload).Err()
 }
 
+func (b *Bus) SubscribePlayerDisconnect(handler func(userID int32, mapID string)) error {
+	return errors.New("not supported on Redis bus")
+}
+
 // === ENCODING/DECODING ===
 // Format được thiết kế cho binary efficiency, không dùng JSON.
 //
