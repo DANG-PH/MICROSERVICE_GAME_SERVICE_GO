@@ -94,8 +94,16 @@ func (t *Ticker) tick() {
 
 	totalPackets := 0
 	for _, ms := range maps {
-		dirty := ms.CollectDirty()
-		if len(dirty) == 0 {
+		var dirty []state.PlayerState
+		var redisDirty []state.PlayerState
+
+		if doFlush {
+			dirty, redisDirty = ms.CollectDirtyBoth() // 1 lần lock
+		} else {
+			dirty = ms.CollectDirty() // 1 lần lock bình thường
+		}
+
+		if len(dirty) == 0 && len(redisDirty) == 0 {
 			continue
 		}
 
@@ -112,13 +120,11 @@ func (t *Ticker) tick() {
 		totalPackets++
 
 		// Gom RedisDirty — chưa flush, gom hết tất cả map rồi flush 1 lần
-		if doFlush {
-			for _, p := range ms.CollectRedisDirty() {
-				moves = append(moves, player.PlayerMoveWithID{
-					UserID: p.UserID,
-					Move:   p.ToMove(),
-				})
-			}
+		for _, p := range redisDirty {
+			moves = append(moves, player.PlayerMoveWithID{
+				UserID: p.UserID,
+				Move:   p.ToMove(),
+			})
 		}
 	}
 

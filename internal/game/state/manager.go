@@ -284,17 +284,23 @@ func (ms *MapState) CollectDirty() []PlayerState {
 	return dirty
 }
 
-func (ms *MapState) CollectRedisDirty() []PlayerState {
+// CollectDirtyBoth thu thập dirty players cho cả broadcast lẫn Redis flush trong 1 lần lock.
+// Tránh acquire lock 2 lần liên tiếp khi tick trùng với flush interval.
+func (ms *MapState) CollectDirtyBoth() (broadcast []PlayerState, redis []PlayerState) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	result := make([]PlayerState, 0)
+
 	for _, p := range ms.players {
+		if p.Dirty {
+			broadcast = append(broadcast, *p)
+			p.Dirty = false
+		}
 		if p.RedisDirty {
-			result = append(result, *p)
+			redis = append(redis, *p)
 			p.RedisDirty = false
 		}
 	}
-	return result
+	return
 }
 
 // ============================================================================
