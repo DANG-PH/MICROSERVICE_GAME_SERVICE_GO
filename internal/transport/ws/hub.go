@@ -118,7 +118,7 @@ func (h *Hub) OnBroadcast(mapID string, data []byte, excludeUserID int32) {
 	// Nếu giữ lock trong khi Send() → các Send() bị block khi slow client → block luôn các request khác.
 	conns := make([]*Conn, 0, len(room))
 	for c := range room {
-		if c.userID != excludeUserID {
+		if c.UserID() != excludeUserID {
 			conns = append(conns, c)
 		}
 	}
@@ -216,15 +216,15 @@ func (h *Hub) KickUser(userID int32) {
 func (h *Hub) register(c *Conn) {
 	h.mu.Lock()
 	// Kick connection cũ nếu có ở instance này.
-	if oldConn, exists := h.connsByUser[c.userID]; exists {
-		h.log.Info("user already connected on this instance, kicking old conn", "userID", c.userID)
+	if oldConn, exists := h.connsByUser[c.UserID()]; exists {
+		h.log.Info("user already connected on this instance, kicking old conn", "userID", c.UserID())
 		// Close ngoài lock để tránh deadlock — nhưng ở đây oldConn.Close()
 		// chỉ close channel, không gọi back vào hub → an toàn.
 		oldConn.Close()
 		// Cleanup oldConn khỏi room.
 		h.removeFromRoomLocked(oldConn)
 	}
-	h.connsByUser[c.userID] = c
+	h.connsByUser[c.UserID()] = c
 	h.addToRoomLocked(c)
 	h.mu.Unlock()
 
@@ -238,14 +238,14 @@ func (h *Hub) register(c *Conn) {
 	// 		if err := h.bus.PublishKickUser(ctx, uid); err != nil {
 	// 			h.log.Warn("publish kick on register failed", "err", err)
 	// 		}
-	// 	}(c.userID)
+	// 	}(c.UserID())
 	// }
 	h.enqueue(publishJob{
 		kind:   publishKick,
-		userID: c.userID,
+		userID: c.UserID(),
 	})
 
-	h.log.Info("conn registered", "userID", c.userID, "mapID", c.mapID)
+	h.log.Info("conn registered", "userID", c.UserID(), "mapID", c.MapID())
 }
 
 // unregister gọi khi conn close (read loop return).
@@ -254,20 +254,20 @@ func (h *Hub) unregister(c *Conn) {
 	var mapID string
 
 	h.mu.Lock()
-	if existing, ok := h.connsByUser[c.userID]; ok && existing == c {
-		delete(h.connsByUser, c.userID)
+	if existing, ok := h.connsByUser[c.UserID()]; ok && existing == c {
+		delete(h.connsByUser, c.UserID())
 	}
 	h.removeFromRoomLocked(c)
 
-	if c.mapID != "" && h.manager != nil {
+	if c.MapID() != "" && h.manager != nil {
 		needCleanup = true
-		mapID = c.mapID
+		mapID = c.MapID()
 	}
 	h.mu.Unlock()
 
 	// Cleanup ngoài lock — tránh nested lock
 	if needCleanup {
-		h.manager.RemovePlayerFromMap(mapID, c.userID)
+		h.manager.RemovePlayerFromMap(mapID, c.UserID())
 	}
 }
 
@@ -277,33 +277,33 @@ func (h *Hub) MoveToRoom(c *Conn, newMap string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.removeFromRoomLocked(c)
-	c.mapID = newMap
+	c.SetMapID(newMap)
 	h.addToRoomLocked(c)
 }
 
 func (h *Hub) addToRoomLocked(c *Conn) {
-	if c.mapID == "" {
+	if c.MapID() == "" {
 		return
 	}
-	room, ok := h.roomsByMap[c.mapID]
+	room, ok := h.roomsByMap[c.MapID()]
 	if !ok {
 		room = make(map[*Conn]struct{})
-		h.roomsByMap[c.mapID] = room
+		h.roomsByMap[c.MapID()] = room
 	}
 	room[c] = struct{}{}
 }
 
 func (h *Hub) removeFromRoomLocked(c *Conn) {
-	if c.mapID == "" {
+	if c.MapID() == "" {
 		return
 	}
-	room, ok := h.roomsByMap[c.mapID]
+	room, ok := h.roomsByMap[c.MapID()]
 	if !ok {
 		return
 	}
 	delete(room, c)
 	if len(room) == 0 {
-		delete(h.roomsByMap, c.mapID)
+		delete(h.roomsByMap, c.MapID())
 	}
 }
 

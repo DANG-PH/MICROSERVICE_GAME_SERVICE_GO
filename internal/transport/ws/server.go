@@ -3,11 +3,13 @@ package ws
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
 
+	"github.com/DANG-PH/game-service-go/internal/auth"
 	"github.com/DANG-PH/game-service-go/internal/shared/messages"
 	"github.com/DANG-PH/game-service-go/internal/shared/protocol"
 )
@@ -18,11 +20,11 @@ type Server struct {
 	log      *slog.Logger
 	upgrader websocket.Upgrader
 	hub      *Hub
-	auth     *Authenticator
+	auth     *auth.Authenticator
 	handler  *Handler
 }
 
-func NewServer(log *slog.Logger, hub *Hub, auth *Authenticator, handler *Handler) *Server {
+func NewServer(log *slog.Logger, hub *Hub, auth *auth.Authenticator, handler *Handler) *Server {
 	return &Server{
 		log: log,
 		upgrader: websocket.Upgrader{
@@ -45,6 +47,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Warn("upgrade failed", "err", err)
 		return
+	}
+
+	// Disable Nagle — giảm latency thực tế
+	if tc, ok := wsConn.UnderlyingConn().(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
 	}
 
 	// Wrap với Conn struct của mình.
@@ -107,9 +114,9 @@ func (s *Server) doHandshake(c *Conn) error {
 	authResult, err := s.auth.Verify(ctx, hs.Token, hs.GameSessionID, hs.UserID)
 	if err != nil {
 		switch err {
-		case ErrInvalidToken, ErrUserIDMismatch:
+		case auth.ErrInvalidToken, auth.ErrUserIDMismatch:
 			s.sendNack(c, protocol.NackReasonAuth)
-		case ErrInvalidSession:
+		case auth.ErrInvalidSession:
 			s.sendNack(c, protocol.NackReasonSession)
 		default:
 			s.sendNack(c, protocol.NackReasonInternal)

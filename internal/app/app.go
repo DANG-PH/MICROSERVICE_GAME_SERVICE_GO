@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/DANG-PH/game-service-go/internal/auth"
 	"github.com/DANG-PH/game-service-go/internal/infra/bus"
 	redisclient "github.com/DANG-PH/game-service-go/internal/infra/redis"
 
@@ -59,7 +60,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	hub := ws.NewHub(log, b, stateManager)
 
 	// Auth - verify JWT + gameSession.
-	auth := ws.NewAuthenticator(cfg.JWTSecret, rdb)
+	auth := auth.NewAuthenticator(cfg.JWTSecret, rdb)
 
 	// Player service - logic xử lý move, update Redis.
 	playerService := player.NewService(rdb)
