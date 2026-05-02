@@ -9,9 +9,9 @@
   <p>
     <a href="https://golang.org/"><img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go" alt="Go Version"/></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"/></a>
-    <a href="https://github.com/DANG-PH/golang-base/stargazers"><img src="https://img.shields.io/github/stars/DANG-PH/golang-base?style=flat&color=yellow" alt="Stars"/></a>
+    <a href="https://github.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO/stargazers"><img src="https://img.shields.io/github/stars/DANG-PH/golang-base?style=flat&color=yellow" alt="Stars"/></a>
     <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
-    <a href="https://goreportcard.com/report/github.com/DANG-PH/golang-base"><img src="https://goreportcard.com/badge/github.com/DANG-PH/golang-base?v=2" alt="Go Report Card"/></a>
+    <a href="https://goreportcard.com/report/github.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO"><img src="https://goreportcard.com/badge/github.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO?v=2" alt="Go Report Card"/></a>
   </p>
 
   <p>
@@ -694,12 +694,12 @@ Tải tại [https://docs.docker.com/get-docker/](https://docs.docker.com/get-do
 
 ```bash
 # 1. Clone
-git clone https://github.com/DANG-PH/golang-base.git my-service
+git clone https://github.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO.git my-service
 cd my-service
 
 # 2. Đổi import path trong code (.go)
 # (dùng full module path, không dùng "my-service")
-find . -type f -name "*.go" -exec sed -i.bak 's|github.com/DANG-PH/golang-base|github.com/DANG-PH/my-service|g' {} +
+find . -type f -name "*.go" -exec sed -i.bak 's|github.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO|github.com/DANG-PH/my-service|g' {} +
 find . -type f -name "*.bak" -delete
 
 # 3. Đổi module chuẩn bằng Go toolchain (KHÔNG edit tay go.mod)
@@ -726,11 +726,11 @@ curl http://localhost:8080/health
 
 ```powershell
 # 1. Clone
-git clone https://github.com/DANG-PH/golang-base.git my-service
+git clone https://github.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO.git my-service
 cd my-service
 
 # 2. Replace import path trong code (.go)
-Get-ChildItem -Recurse -Filter "*.go" | % { [System.IO.File]::WriteAllText($_.FullName, ([System.IO.File]::ReadAllText($_.FullName) -replace 'github.com/DANG-PH/golang-base','github.com/DANG-PH/my-service'), (New-Object System.Text.UTF8Encoding($false))) }
+Get-ChildItem -Recurse -Filter "*.go" | % { [System.IO.File]::WriteAllText($_.FullName, ([System.IO.File]::ReadAllText($_.FullName) -replace 'github.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO','github.com/DANG-PH/my-service'), (New-Object System.Text.UTF8Encoding($false))) }
 
 # 3. Update module đúng chuẩn (tránh BOM + lỗi syntax)
 go mod edit -module github.com/DANG-PH/my-service
