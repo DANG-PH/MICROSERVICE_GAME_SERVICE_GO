@@ -60,6 +60,33 @@ func (h *Handler) Handle(c *Conn, data []byte) {
 	}
 }
 
+// switchMap chuyển player từ map cũ sang map mới,
+// đồng thời giữ hai layer luôn đồng bộ:
+//
+//	Hub.roomsByMap — xác định conn nào nhận broadcast packet
+//	Manager.maps   — lưu game state thực sự của từng map
+//
+// Hai layer phải được cập nhật cùng nhau. Nếu gọi MoveToRoom hoặc
+// GetOrCreateMap riêng lẻ, state có thể lệch — ví dụ Hub đã route
+// packet sang map mới nhưng MapState vẫn nằm ở map cũ.
+//
+// Thứ tự thực hiện quan trọng:
+//  1. Xóa khỏi MapState cũ trước — tránh broadcast vị trí cũ
+//     vào room cũ trong khoảng thời gian chuyển tiếp.
+//  2. MoveToRoom — Hub route packet sang room mới.
+//  3. GetOrCreateMap — khởi tạo MapState nếu chưa có player nào vào map này.
+//
+// Hub không cần biết player có mặc đồ k, đứng ở tọa độ nào
+// Manager không cần biết WebSocket conn nào đang mở
+// Logic chỉ được gọi từ handlePlayerMove khi c.mapID != mapID mới.
+func (h *Handler) switchMap(c *Conn, newMapID string) *state.MapState {
+	if c.mapID != "" {
+		h.manager.RemovePlayerFromMap(c.mapID, c.userID)
+	}
+	h.hub.MoveToRoom(c, newMapID)             // update Hub routing
+	return h.manager.GetOrCreateMap(newMapID) // đảm bảo MapState tồn tại
+}
+
 func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 	var m messages.PlayerMove
 	if err := m.Decode(payload); err != nil {
@@ -67,17 +94,13 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 		return
 	}
 
-	// Đổi map — cleanup state cũ + chuyển room.
+	var ms *state.MapState
 	if c.mapID != m.MapID {
-		if c.mapID != "" {
-			h.manager.RemovePlayerFromMap(c.mapID, c.userID) // tự cleanup empty map
-		}
-		h.hub.MoveToRoom(c, m.MapID)
+		ms = h.switchMap(c, m.MapID) // atomic từ góc nhìn handler
+	} else {
+		ms = h.manager.GetOrCreateMap(m.MapID)
 	}
 
-	// Update state — UpdateFromMove tự tạo entry nếu chưa có.
-	// Tick loop sẽ broadcast (KHÔNG broadcast ở đây).
-	ms := h.manager.GetOrCreateMap(m.MapID)
 	ms.UpdateFromMove(c.userID, &m)
 
 	// Redis update — fire-and-forget per packet.

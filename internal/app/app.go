@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/DANG-PH/game-service-go/internal/infra/bus"
 	redisclient "github.com/DANG-PH/game-service-go/internal/infra/redis"
 
 	"github.com/DANG-PH/game-service-go/internal/transport/ws"
 
+	"github.com/DANG-PH/game-service-go/internal/game/loop"
 	"github.com/DANG-PH/game-service-go/internal/game/player"
 	"github.com/DANG-PH/game-service-go/internal/game/state"
 
@@ -22,8 +24,8 @@ type App struct {
 	cfg    *config.Config
 	log    *slog.Logger
 	server *http.Server
-	bus    ws.BusInterface // cross-instance message bus, cần Stop() khi shutdown
-	ticker *ws.Ticker
+	bus    bus.BusInterface // cross-instance message bus, cần Stop() khi shutdown
+	ticker *loop.Ticker
 	hub    *ws.Hub
 }
 
@@ -37,13 +39,13 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	}
 	log.Info("redis connected", "url", cfg.RedisURL)
 
-	var bus ws.BusInterface
+	var b bus.BusInterface
 	if cfg.UseNATS {
 		log.Info("using NATS bus")
-		bus, err = ws.NewNATSBus(cfg.NATSURL, log)
+		b, err = bus.NewNATSBus(cfg.NATSURL, log)
 	} else {
 		log.Info("using Redis bus")
-		bus, err = ws.NewBus(cfg.RedisURL, log)
+		b, err = bus.NewBus(cfg.RedisURL, log)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("init bus: %w", err)
@@ -54,7 +56,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	stateManager := state.NewManager()
 
 	// Hub - quản lý WebSocket connections, wire bus để broadcast cross-instance.
-	hub := ws.NewHub(log, bus, stateManager)
+	hub := ws.NewHub(log, b, stateManager)
 
 	// Auth - verify JWT + gameSession.
 	auth := ws.NewAuthenticator(cfg.JWTSecret, rdb)
@@ -75,7 +77,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	//   - Dev: 100ms (đỡ noisy log)
 	//   - Prod: 50ms (smooth gameplay)
 	//   - Stress test: 33ms (30Hz)
-	ticker := ws.NewTicker(log, hub, stateManager, time.Second/time.Duration(cfg.TickRate))
+	ticker := loop.NewTicker(log, hub, stateManager, time.Second/time.Duration(cfg.TickRate))
 
 	// WebSocket server - HTTP upgrade endpoint.
 	wsServer := ws.NewServer(log, hub, auth, handler)
@@ -88,7 +90,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	// Thêm nodeID để debug multi-instance dễ hơn (curl healthcheck biết hit instance nào).
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		totalConns, totalRooms := hub.Stats()
-		fmt.Fprintf(w, "ok\nnode=%s\nconns=%d\nrooms=%d\n", bus.NodeID(), totalConns, totalRooms)
+		fmt.Fprintf(w, "ok\nnode=%s\nconns=%d\nrooms=%d\n", b.NodeID(), totalConns, totalRooms)
 	})
 
 	// HTTP server với timeout config.
@@ -105,7 +107,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		cfg:    cfg,
 		log:    log,
 		server: server,
-		bus:    bus,
+		bus:    b,
 		ticker: ticker,
 		hub:    hub,
 	}, nil
@@ -116,10 +118,12 @@ func (a *App) Run() error {
 	// Start bus subscriber TRƯỚC khi accept WebSocket connection.
 	// Nếu bus chưa start mà có conn vào → broadcast từ instance khác bị miss.
 	// Dùng Background context — bus chạy đến khi Stop() được gọi.
+	// TODO: Cần fix lại (anti pattern)
 	if err := a.bus.Start(context.Background()); err != nil {
 		return fmt.Errorf("start bus: %w", err)
 	}
 
+	// TODO: Cần fix lại (anti pattern)
 	a.ticker.Start(context.Background())
 	a.log.Info("tick loop started")
 

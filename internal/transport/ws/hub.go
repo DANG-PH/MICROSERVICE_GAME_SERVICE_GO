@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DANG-PH/game-service-go/internal/game/state"
+	"github.com/DANG-PH/game-service-go/internal/infra/bus"
 )
 
 // Hub quản lý tất cả connection và phân loại theo map.
@@ -29,7 +30,7 @@ import (
 //   - OnKickUser: instance khác bảo kick user → kick nếu user ở instance này
 type Hub struct {
 	log     *slog.Logger
-	bus     BusInterface // nil = single-instance mode (dev/test)
+	bus     bus.BusInterface // nil = single-instance mode (dev/test)
 	manager *state.Manager
 
 	mu          sync.RWMutex
@@ -71,10 +72,10 @@ const (
 // var x *Hub = nil  // ✅ pointer to Hub, nil
 // var x = (*Hub)(nil) // ✅ tương đương dòng trên
 // Check như này tránh đổi nhầm tên mà compile vẫn đúng, nếu ai đó thay đổi tên hàm thì k implements -> phải fail luôn
-var _ BusHandler = (*Hub)(nil)
+var _ bus.BusHandler = (*Hub)(nil)
 
 // NewHub — bus có thể nil (chạy single instance, ví dụ test).
-func NewHub(log *slog.Logger, bus BusInterface, manager *state.Manager) *Hub {
+func NewHub(log *slog.Logger, bus bus.BusInterface, manager *state.Manager) *Hub {
 	h := &Hub{
 		log:         log,
 		bus:         bus,

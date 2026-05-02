@@ -61,7 +61,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.hub.register(conn)
 
 	// Spawn 2 goroutine: read và write.
-	// writeLoop chạy trước để có thể nhận message ngay (vd kick).
+	// writeLoop chạy trước để sẵn sàng cho read dùng (nếu read chạy trc có case cần write thì sai)
 	go conn.writeLoop()
 	conn.readLoop(s.handler) // chạy trong goroutine của ServeHTTP — block tới khi conn close.
 }
@@ -118,10 +118,6 @@ func (s *Server) doHandshake(c *Conn) error {
 	}
 
 	c.SetUserID(authResult.UserID)
-
-	// Note: mapID chưa biết tại thời điểm handshake.
-	// Client phải gửi MsgPlayerMove đầu tiên kèm mapID → handler sẽ gọi MoveToRoom.
-	// Hoặc sau này có MsgEnterMap riêng để client báo map.
 
 	// Reply Ack.
 	c.ws.SetWriteDeadline(time.Now().Add(time.Second))

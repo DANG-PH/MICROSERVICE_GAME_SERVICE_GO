@@ -1,6 +1,6 @@
 // internal/ws/bus_iface.go (file mới)
 
-package ws
+package bus
 
 import "context"
 

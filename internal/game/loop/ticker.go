@@ -1,4 +1,4 @@
-package ws
+package loop
 
 import (
 	"context"
@@ -7,18 +7,19 @@ import (
 
 	"github.com/DANG-PH/game-service-go/internal/game/state"
 	"github.com/DANG-PH/game-service-go/internal/shared/messages"
+	"github.com/DANG-PH/game-service-go/internal/transport/ws"
 )
 
 type Ticker struct {
 	log     *slog.Logger
-	hub     *Hub
+	hub     *ws.Hub
 	manager *state.Manager
 
 	interval time.Duration
 	stopCh   chan struct{}
 }
 
-func NewTicker(log *slog.Logger, hub *Hub, manager *state.Manager, interval time.Duration) *Ticker {
+func NewTicker(log *slog.Logger, hub *ws.Hub, manager *state.Manager, interval time.Duration) *Ticker {
 	if interval <= 0 {
 		interval = 50 * time.Millisecond
 	}
@@ -98,12 +99,13 @@ func (t *Ticker) tick() {
 		totalPackets++
 	}
 
+	// TODO: Alerting & Monitoring phần này
 	elapsed := time.Since(start)
-	if elapsed > t.interval/2 {
-		t.log.Warn("tick slow",
-			"elapsed", elapsed,
-			"maps", len(maps),
-			"packets", totalPackets,
-		)
+	if elapsed > t.interval {
+		// critical: miss tick
+	} else if elapsed > t.interval*3/4 {
+		// warning: gần miss
+	} else if elapsed > t.interval/2 {
+		// info: bắt đầu nặng
 	}
 }
