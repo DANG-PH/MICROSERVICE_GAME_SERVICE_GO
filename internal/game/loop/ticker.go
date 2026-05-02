@@ -188,10 +188,10 @@ func (t *Ticker) tick() {
 //      → Gameplay đọc từ in-memory MapState, không đọc từ Redis
 //
 // với case 1000 CCU :
-// Cách 3
 // - giảm x40 Write count
-// 		20000+/s (cách 1 vì player có thể cheat, spawn 20000+ goroutine/s),
-// 		20000/s (cách 2) -> 500/s (vì cách 2 1000/2s)
+// 		Cách 1 -> 20000+/s, spawn goroutine 20000+/s
+// 		Cách 2 -> 20000/s
+// 		Cách 3 -> 500/s (vì cách 2 1000/2s)
 // - giảm x20000+, x20000 round trip xuống 1 TCP round trip
 // 		giảm tải bằng batch handleMoveBatch để gom round trip thay vì dùng handleMove per player
 // =========================================================================
