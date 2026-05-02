@@ -78,7 +78,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	//   - Dev: 100ms (đỡ noisy log)
 	//   - Prod: 50ms (smooth gameplay)
 	//   - Stress test: 33ms (30Hz)
-	ticker := loop.NewTicker(log, hub, stateManager, time.Second/time.Duration(cfg.TickRate))
+	ticker := loop.NewTicker(log, hub, stateManager, playerService, time.Second/time.Duration(cfg.TickRate))
 
 	// WebSocket server - HTTP upgrade endpoint.
 	wsServer := ws.NewServer(log, hub, auth, handler)

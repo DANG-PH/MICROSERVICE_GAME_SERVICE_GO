@@ -23,7 +23,7 @@ type Ticker struct {
 	stopCh        chan struct{}
 }
 
-func NewTicker(log *slog.Logger, hub *ws.Hub, manager *state.Manager, interval time.Duration) *Ticker {
+func NewTicker(log *slog.Logger, hub *ws.Hub, manager *state.Manager, playerService *player.Service, interval time.Duration) *Ticker {
 	if interval <= 0 {
 		interval = 50 * time.Millisecond
 	}
@@ -31,6 +31,7 @@ func NewTicker(log *slog.Logger, hub *ws.Hub, manager *state.Manager, interval t
 		log:           log,
 		hub:           hub,
 		manager:       manager,
+		playerService: playerService,
 		interval:      interval,
 		flushInterval: 2 * time.Second,
 		lastFlush:     time.Now(),
