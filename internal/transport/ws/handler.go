@@ -94,11 +94,6 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 		return
 	}
 
-	// Tránh việc NestJS disconnect rồi mà Go vẫn chạy move được
-	if !h.manager.PlayerExistsInMap(m.MapID, c.userID) {
-		return
-	}
-
 	var ms *state.MapState
 	if c.mapID != m.MapID {
 		ms = h.switchMap(c, m.MapID) // atomic từ góc nhìn handler
@@ -131,6 +126,9 @@ func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
 	go func(userID int32, move messages.PlayerMove) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
+		if !h.manager.PlayerExistsInMap(move.MapID, userID) {
+			return // đã disconnect, skip Redis
+		}
 		if err := h.playerService.HandleMove(ctx, userID, &move); err != nil {
 			h.log.Warn("redis update failed", "err", err, "userID", userID)
 		}
