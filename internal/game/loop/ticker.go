@@ -5,18 +5,22 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DANG-PH/game-service-go/internal/game/player"
 	"github.com/DANG-PH/game-service-go/internal/game/state"
 	"github.com/DANG-PH/game-service-go/internal/shared/messages"
 	"github.com/DANG-PH/game-service-go/internal/transport/ws"
 )
 
 type Ticker struct {
-	log     *slog.Logger
-	hub     *ws.Hub
-	manager *state.Manager
+	log           *slog.Logger
+	hub           *ws.Hub
+	manager       *state.Manager
+	playerService *player.Service
 
-	interval time.Duration
-	stopCh   chan struct{}
+	interval      time.Duration
+	flushInterval time.Duration // thêm, mặc định 2s
+	lastFlush     time.Time     // thêm
+	stopCh        chan struct{}
 }
 
 func NewTicker(log *slog.Logger, hub *ws.Hub, manager *state.Manager, interval time.Duration) *Ticker {
@@ -24,11 +28,13 @@ func NewTicker(log *slog.Logger, hub *ws.Hub, manager *state.Manager, interval t
 		interval = 50 * time.Millisecond
 	}
 	return &Ticker{
-		log:      log,
-		hub:      hub,
-		manager:  manager,
-		interval: interval,
-		stopCh:   make(chan struct{}),
+		log:           log,
+		hub:           hub,
+		manager:       manager,
+		interval:      interval,
+		flushInterval: 2 * time.Second,
+		lastFlush:     time.Now(),
+		stopCh:        make(chan struct{}),
 	}
 }
 
@@ -74,6 +80,17 @@ func (t *Ticker) run(ctx context.Context) {
 func (t *Ticker) tick() {
 	start := time.Now()
 	maps := t.manager.AllMaps()
+	doFlush := time.Since(t.lastFlush) >= t.flushInterval
+
+	var flushCtx context.Context
+	var flushCancel context.CancelFunc
+	if doFlush {
+		flushCtx, flushCancel = context.WithTimeout(context.Background(), 1*time.Second)
+		defer flushCancel()
+	}
+
+	// Gom moves bên ngoài for loop để batch 1 lần sau
+	var moves []player.PlayerMoveWithID
 
 	totalPackets := 0
 	for _, ms := range maps {
@@ -82,8 +99,7 @@ func (t *Ticker) tick() {
 			continue
 		}
 
-		// Gom tất cả dirty players → 1 packet → broadcast 1 lần
-		// O(conns_per_map) thay vì O(dirty × conns_per_map)
+		// Broadcast
 		syncs := make([]messages.PlayerSync, len(dirty))
 		now := time.Now().UnixMilli()
 		for i := range dirty {
@@ -91,15 +107,29 @@ func (t *Ticker) tick() {
 			s.ServerTime = now
 			syncs[i] = *s
 		}
-
 		batch := &messages.PlayerSyncBatch{Players: syncs}
-		packet := batch.Encode()
-
-		t.hub.BroadcastToMap(ms.MapID, packet, nil) // nil = không exclude ai
+		t.hub.BroadcastToMap(ms.MapID, batch.Encode(), nil)
 		totalPackets++
+
+		// Gom RedisDirty — chưa flush, gom hết tất cả map rồi flush 1 lần
+		if doFlush {
+			for _, p := range ms.CollectRedisDirty() {
+				moves = append(moves, player.PlayerMoveWithID{
+					UserID: p.UserID,
+					Move:   p.ToMove(),
+				})
+			}
+		}
 	}
 
-	// TODO: Alerting & Monitoring phần này
+	// Flush toàn bộ trong 1 round-trip sau khi đã gom hết
+	if doFlush {
+		if err := t.playerService.HandleMoveBatch(flushCtx, moves); err != nil {
+			t.log.Warn("redis batch flush failed", "err", err, "count", len(moves))
+		}
+		t.lastFlush = time.Now()
+	}
+
 	elapsed := time.Since(start)
 	if elapsed > t.interval {
 		// critical: miss tick
@@ -109,3 +139,54 @@ func (t *Ticker) tick() {
 		// info: bắt đầu nặng
 	}
 }
+
+// =========================================================================
+// TẠI SAO CẦN 2 DIRTY FLAG (Dirty vs RedisDirty)?
+//
+// Vấn đề nếu dùng chung 1 flag:
+//   Tick 1 (0ms):   player move → CollectDirty → Dirty=false → broadcast ✅
+//   Tick 2 (50ms):  player move → CollectDirty → Dirty=false → broadcast ✅
+//   ...
+//   Tick 40 (2s):   doFlush=true → CollectDirty trả [] vì đã reset hết → flush không có gì ❌
+//
+// Giải pháp: tách 2 flag độc lập
+//   Dirty      → phục vụ broadcast 20Hz, reset sau mỗi tick
+//   RedisDirty → phục vụ Redis flush 0.5Hz, reset sau khi flush
+//
+// =========================================================================
+// SO SÁNH 3 CÁCH FLUSH REDIS:
+//
+// CÁCH 1 — Per move (cũ):
+//   Mỗi packet move → Redis HSet ngay lập tức
+//   ✅ Realtime tuyệt đối, NestJS luôn đọc được vị trí mới nhất
+//   ❌ 20 move/s × 1000 player = 20,000 Redis write/s
+//   ❌ Mỗi write là 1 goroutine riêng → 20,000 goroutine/s → GC pressure cao
+//   ❌ Redis là bottleneck — game lag khi Redis chậm dù gameplay in-memory vẫn ok
+//   ❌ Không batch → không tận dụng pipeline → nhiều round-trip TCP
+//
+// CÁCH 2 — Mỗi tick 20Hz:
+//   Flush Redis cùng lúc broadcast, mỗi 50ms
+//   ✅ Không cần 2 dirty flag — dùng dirty players vừa collect được
+//   ✅ Fresh hơn cách 3 (50ms vs 2s)
+//   ❌ 20Hz × 1000 player = vẫn 20,000 Redis write/s trong worst case
+//   ❌ Redis write block tick loop → miss tick → gameplay giật
+//      (tick loop phải chạy < 50ms, Redis write có thể 10-50ms/batch)
+//   ❌ Chỉ giảm được goroutine overhead so với per move, không giảm write count
+//
+// CÁCH 3 — Timer riêng 2s (đang dùng):
+//   Gom tất cả dirty trong 2s → flush 1 lần bằng pipeline
+//   ✅ Redis write giảm 40x so với per move (từ 20,000/s xuống ~500/s)
+//   ✅ Batch pipeline → 1 round-trip TCP cho nhiều player
+//   ✅ Tick loop không bị Redis block (flush chạy độc lập)
+//   ✅ NestJS cron flush DB chạy mỗi 20s → Redis chỉ cần fresh mỗi 2s là đủ
+//   ❌ Vị trí trong Redis có thể trễ tối đa 2s so với in-memory
+//      → Chấp nhận được vì Redis chỉ là snapshot cho NestJS, không ảnh hưởng gameplay
+//      → Gameplay đọc từ in-memory MapState, không đọc từ Redis
+//
+// với case 1000 CCU :
+// Cách 3
+// - giảm x40 Write count
+// 		(20000+/s (cách 1 vì player có thể cheat),20000/s (cách 2) -> 500/s (vì cách 2 1000/2s))
+// - giảm x20000+, x20000 round trip xuống 1 TCP round trip
+// 		(giảm tải bằng batch handleMoveBatch để gom round trip thay vì dùng handleMove per player)
+// =========================================================================

@@ -41,8 +41,9 @@ type PlayerState struct {
 	Cao            float32
 	Avatar         string
 
-	UpdatedAt int64 // unix milli — server timestamp khi nhận update gần nhất
-	Dirty     bool  // true nếu state đã thay đổi từ tick trước, cần broadcast
+	UpdatedAt  int64 // unix milli — server timestamp khi nhận update gần nhất
+	Dirty      bool  // cho broadcast tick
+	RedisDirty bool  // cho Redis flush — không bị reset bởi CollectDirty
 }
 
 // ToSync convert PlayerState (struct internal của Go) sang PlayerSync (DTO gửi qua network).
@@ -59,6 +60,42 @@ type PlayerState struct {
 func (p *PlayerState) ToSync() *messages.PlayerSync {
 	return &messages.PlayerSync{
 		UserID:         p.UserID,
+		X:              p.X,
+		Y:              p.Y,
+		Trangthai:      p.Trangthai,
+		Dir:            p.Dir,
+		Dau:            p.Dau,
+		Than:           p.Than,
+		Chan:           p.Chan,
+		TimeChoHienBay: p.TimeChoHienBay,
+		LechDauX:       p.LechDauX,
+		LechDauY:       p.LechDauY,
+		LechThanX:      p.LechThanX,
+		LechThanY:      p.LechThanY,
+		LechChanX:      p.LechChanX,
+		LechChanY:      p.LechChanY,
+		DangMangVanBay: p.DangMangVanBay,
+		TenVanBay:      p.TenVanBay,
+		Rong:           p.Rong,
+		Cao:            p.Cao,
+		Avatar:         p.Avatar,
+	}
+}
+
+// ToMove convert PlayerState → PlayerMove để Ticker dùng cho Redis flush.
+//
+// VISIBILITY: external
+//
+// AI GỌI:
+//   - loop.Ticker.tick() — mỗi 2s flush Redis, cần convert PlayerState sang PlayerMove
+//     để tái sử dụng playerService.HandleMove
+//
+// MỤC ĐÍCH:
+//   - Tránh duplicate logic Redis write — HandleMove đã có sẵn pipeline + dirty key
+//   - Tách hàm riêng để dễ test
+func (p *PlayerState) ToMove() *messages.PlayerMove {
+	return &messages.PlayerMove{
+		MapID:          p.MapID,
 		X:              p.X,
 		Y:              p.Y,
 		Trangthai:      p.Trangthai,
@@ -167,6 +204,7 @@ func (ms *MapState) UpdateFromMove(userID int32, m *messages.PlayerMove) {
 	p.Avatar = m.Avatar
 	p.UpdatedAt = now
 	p.Dirty = true
+	p.RedisDirty = true
 }
 
 // IsEmpty trả về true nếu map không còn player nào.
@@ -244,6 +282,19 @@ func (ms *MapState) CollectDirty() []PlayerState {
 		}
 	}
 	return dirty
+}
+
+func (ms *MapState) CollectRedisDirty() []PlayerState {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	result := make([]PlayerState, 0)
+	for _, p := range ms.players {
+		if p.RedisDirty {
+			result = append(result, *p)
+			p.RedisDirty = false
+		}
+	}
+	return result
 }
 
 // ============================================================================
