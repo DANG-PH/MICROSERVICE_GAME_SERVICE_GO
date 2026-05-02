@@ -83,13 +83,6 @@ func (t *Ticker) tick() {
 	maps := t.manager.AllMaps()
 	doFlush := time.Since(t.lastFlush) >= t.flushInterval
 
-	var flushCtx context.Context
-	var flushCancel context.CancelFunc
-	if doFlush {
-		flushCtx, flushCancel = context.WithTimeout(context.Background(), 1*time.Second)
-		defer flushCancel()
-	}
-
 	// Gom moves bên ngoài for loop để batch 1 lần sau
 	var moves []player.PlayerMoveWithID
 
@@ -131,9 +124,13 @@ func (t *Ticker) tick() {
 
 	// Flush toàn bộ trong 1 round-trip sau khi đã gom hết
 	if doFlush {
-		if err := t.playerService.HandleMoveBatch(flushCtx, moves); err != nil {
-			t.log.Warn("redis batch flush failed", "err", err, "count", len(moves))
-		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			if err := t.playerService.HandleMoveBatch(ctx, moves); err != nil {
+				t.log.Warn("redis batch flush failed", "err", err, "count", len(moves))
+			}
+		}()
 		t.lastFlush = time.Now()
 	}
 
@@ -193,7 +190,8 @@ func (t *Ticker) tick() {
 // với case 1000 CCU :
 // Cách 3
 // - giảm x40 Write count
-// 		(20000+/s (cách 1 vì player có thể cheat),20000/s (cách 2) -> 500/s (vì cách 2 1000/2s))
+// 		20000+/s (cách 1 vì player có thể cheat, spawn 20000+ goroutine/s),
+// 		20000/s (cách 2) -> 500/s (vì cách 2 1000/2s)
 // - giảm x20000+, x20000 round trip xuống 1 TCP round trip
-// 		(giảm tải bằng batch handleMoveBatch để gom round trip thay vì dùng handleMove per player)
+// 		giảm tải bằng batch handleMoveBatch để gom round trip thay vì dùng handleMove per player
 // =========================================================================
