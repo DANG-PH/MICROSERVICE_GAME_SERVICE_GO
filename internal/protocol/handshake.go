@@ -1,8 +1,4 @@
-package messages
-
-import (
-	"github.com/DANG-PH/game-service-go/internal/shared/protocol"
-)
+package protocol
 
 // Handshake — first message client gửi sau khi WebSocket connect.
 //
@@ -24,7 +20,7 @@ type Handshake struct {
 }
 
 func (m *Handshake) Decode(data []byte) error {
-	d := protocol.NewDecoder(data)
+	d := NewDecoder(data)
 	var err error
 	if m.ProtocolVersion, err = d.ReadUint16(); err != nil {
 		return err
@@ -46,7 +42,7 @@ func (m *Handshake) Decode(data []byte) error {
 //	[0x80] msgType
 //	(không có payload, đủ rồi)
 func EncodeHandshakeAck() []byte {
-	enc := protocol.NewEncoder(protocol.MsgHandshakeAck)
+	enc := NewEncoder(MsgHandshakeAck)
 	return enc.Bytes()
 }
 
@@ -55,7 +51,7 @@ func EncodeHandshakeAck() []byte {
 //	[0x81] msgType
 //	[uint8] reason (NackReasonVersion, NackReasonAuth, ...)
 func EncodeHandshakeNack(reason uint8) []byte {
-	enc := protocol.NewEncoder(protocol.MsgHandshakeNack)
+	enc := NewEncoder(MsgHandshakeNack)
 	enc.WriteUint8(reason)
 	return enc.Bytes()
 }

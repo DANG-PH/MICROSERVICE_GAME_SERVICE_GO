@@ -10,8 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/DANG-PH/game-service-go/internal/auth"
-	"github.com/DANG-PH/game-service-go/internal/shared/messages"
-	"github.com/DANG-PH/game-service-go/internal/shared/protocol"
+	"github.com/DANG-PH/game-service-go/internal/protocol"
 )
 
 // Server là HTTP handler upgrade WebSocket và xử lý handshake.
@@ -94,7 +93,7 @@ func (s *Server) doHandshake(c *Conn) error {
 		return websocket.ErrBadHandshake
 	}
 
-	var hs messages.Handshake
+	var hs protocol.Handshake
 	if err := hs.Decode(data[1:]); err != nil {
 		s.sendNack(c, protocol.NackReasonInternal)
 		return err
@@ -128,7 +127,7 @@ func (s *Server) doHandshake(c *Conn) error {
 
 	// Reply Ack.
 	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
-	if err := c.ws.WriteMessage(websocket.BinaryMessage, messages.EncodeHandshakeAck()); err != nil {
+	if err := c.ws.WriteMessage(websocket.BinaryMessage, protocol.EncodeHandshakeAck()); err != nil {
 		return err
 	}
 
@@ -140,5 +139,5 @@ func (s *Server) doHandshake(c *Conn) error {
 
 func (s *Server) sendNack(c *Conn, reason uint8) {
 	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
-	c.ws.WriteMessage(websocket.BinaryMessage, messages.EncodeHandshakeNack(reason))
+	c.ws.WriteMessage(websocket.BinaryMessage, protocol.EncodeHandshakeNack(reason))
 }

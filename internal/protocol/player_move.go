@@ -1,8 +1,4 @@
-package messages
-
-import (
-	"github.com/DANG-PH/game-service-go/internal/shared/protocol"
-)
+package protocol
 
 // PlayerMove — client gửi vị trí mới.
 //
@@ -58,7 +54,7 @@ type PlayerMove struct {
 }
 
 func (m *PlayerMove) Decode(data []byte) error {
-	d := protocol.NewDecoder(data)
+	d := NewDecoder(data)
 	var err error
 
 	if m.MapID, err = d.ReadString(); err != nil {
@@ -151,7 +147,7 @@ type PlayerSync struct {
 }
 
 func (m *PlayerSync) Encode() []byte {
-	enc := protocol.NewEncoder(protocol.MsgPlayerSync)
+	enc := NewEncoder(MsgPlayerSync)
 	enc.WriteInt32(m.UserID)
 	enc.WriteFloat32(m.X)
 	enc.WriteFloat32(m.Y)
@@ -190,7 +186,7 @@ type PlayerSyncBatch struct {
 }
 
 func (b *PlayerSyncBatch) Encode() []byte {
-	enc := protocol.NewEncoder(protocol.MsgPlayerSyncBatch)
+	enc := NewEncoder(MsgPlayerSyncBatch)
 	enc.WriteUint16(uint16(len(b.Players)))
 	for i := range b.Players {
 		p := &b.Players[i]

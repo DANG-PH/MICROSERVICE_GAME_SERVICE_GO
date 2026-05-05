@@ -7,10 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/DANG-PH/game-service-go/internal/protocol"
 	"github.com/redis/go-redis/v9"
-
-	"github.com/DANG-PH/game-service-go/internal/shared/enums"
-	"github.com/DANG-PH/game-service-go/internal/shared/messages"
 )
 
 // Service xử lý business logic player.
@@ -39,12 +37,12 @@ func NewService(rdb *redis.Client) *Service {
 //
 // Tối ưu sau (Phase 2): batch HSET pipeline mỗi tick thay vì mỗi move.
 // Cách này dùng Cho cách 1 và cách 2 (Đọc ở Cuối file ticker.go để biết, có trade off là N round trip per player)
-func (s *Service) HandleMove(ctx context.Context, userID int32, m *messages.PlayerMove) error {
+func (s *Service) HandleMove(ctx context.Context, userID int32, m *protocol.PlayerMove) error {
 	key := fmt.Sprintf("GAME:PLAYER:%d", userID)
 	dirtyKey := fmt.Sprintf("dirty:%d", userID)
 
 	// Convert trangthai từ uint8 enum sang string để khớp với NestJS Redis format.
-	trangthaiStr := enums.TrangthaiToString(m.Trangthai)
+	trangthaiStr := TrangthaiToString(m.Trangthai)
 
 	// Pipeline: gửi nhiều command trong 1 round-trip.
 	// Khác MULTI/EXEC ở chỗ pipeline KHÔNG atomic — nếu cần atomic thì dùng TxPipeline().
@@ -84,7 +82,7 @@ func (s *Service) HandleMove(ctx context.Context, userID int32, m *messages.Play
 // Cần struct riêng vì k thể thêm userID vào PlayerMove (cái này do client gửi lên, gửi thêm userID sẽ sai về mặt protocol)
 type PlayerMoveWithID struct {
 	UserID int32
-	Move   *messages.PlayerMove
+	Move   *protocol.PlayerMove
 }
 
 // HandleMoveBatch flush toàn bộ dirty players vào Redis trong 1 round-trip duy nhất.
@@ -114,7 +112,7 @@ func (s *Service) HandleMoveBatch(ctx context.Context, players []PlayerMoveWithI
 	for _, p := range players {
 		key := fmt.Sprintf("GAME:PLAYER:%d", p.UserID)
 		dirtyKey := fmt.Sprintf("dirty:%d", p.UserID)
-		trangthaiStr := enums.TrangthaiToString(p.Move.Trangthai)
+		trangthaiStr := TrangthaiToString(p.Move.Trangthai)
 
 		pipe.SetNX(ctx, dirtyKey, now, 600*time.Second)
 		pipe.HSet(ctx, key, map[string]interface{}{

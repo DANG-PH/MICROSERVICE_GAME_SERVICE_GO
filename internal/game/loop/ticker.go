@@ -7,7 +7,7 @@ import (
 
 	"github.com/DANG-PH/game-service-go/internal/game/player"
 	"github.com/DANG-PH/game-service-go/internal/game/state"
-	"github.com/DANG-PH/game-service-go/internal/shared/messages"
+	"github.com/DANG-PH/game-service-go/internal/protocol"
 	"github.com/DANG-PH/game-service-go/internal/transport/ws"
 )
 
@@ -102,14 +102,14 @@ func (t *Ticker) tick() {
 		}
 
 		// Broadcast
-		syncs := make([]messages.PlayerSync, len(dirty))
+		syncs := make([]protocol.PlayerSync, len(dirty))
 		now := time.Now().UnixMilli()
 		for i := range dirty {
 			s := dirty[i].ToSync()
 			s.ServerTime = now
 			syncs[i] = *s
 		}
-		batch := &messages.PlayerSyncBatch{Players: syncs}
+		batch := &protocol.PlayerSyncBatch{Players: syncs}
 		t.hub.BroadcastToMap(ms.MapID, batch.Encode(), nil)
 		totalPackets++
 

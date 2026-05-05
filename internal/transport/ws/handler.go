@@ -5,8 +5,7 @@ import (
 
 	"github.com/DANG-PH/game-service-go/internal/game/player"
 	"github.com/DANG-PH/game-service-go/internal/game/state"
-	"github.com/DANG-PH/game-service-go/internal/shared/messages"
-	"github.com/DANG-PH/game-service-go/internal/shared/protocol"
+	"github.com/DANG-PH/game-service-go/internal/protocol"
 )
 
 // Handler là nơi route message theo msgType byte đầu tiên.
@@ -86,7 +85,7 @@ func (h *Handler) switchMap(c *Conn, newMapID string) *state.MapState {
 }
 
 func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
-	var m messages.PlayerMove
+	var m protocol.PlayerMove
 	if err := m.Decode(payload); err != nil {
 		h.log.Warn("decode PlayerMove failed", "err", err, "userID", c.userID)
 		return

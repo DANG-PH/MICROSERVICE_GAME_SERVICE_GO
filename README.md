@@ -43,6 +43,9 @@ Không bao gồm web framework, ORM, hay bất kỳ business logic nào. Những
 ```
 golang-base/
 │
+├── .github/
+│    └── workflows/
+│        └── ci.yml
 ├── cmd/
 │   └── api/
 │       └── main.go                    # Entry point — wire mọi thứ lại với nhau
@@ -53,43 +56,18 @@ golang-base/
 │   │
 │   ├── app/
 │   │   └── app.go                     # Bootstrap — khởi tạo và chạy app
+│   ├── auth/ -> auth.go
 │   │
-│   ├── transport/                     # Inbound — thế giới gọi vào chúng ta
-│   │   ├── http/
-│   │   │   ├── server.go              # HTTP server lifecycle, timeout, graceful shutdown
-│   │   │   ├── router.go              # Đăng ký routes
-│   │   │   └── middleware/
-│   │   │       ├── logger.go          # Log method, path, status, latency mỗi request
-│   │   │       └── recovery.go        # Bắt panic, trả 500 thay vì crash server
-│   │   │
-│   │   ├── grpc/                      # gRPC server — nhận RPC từ service khác gọi vào
-│   │   │   ├── server.go              # Setup gRPC server, TLS, interceptor chain
-│   │   │   └── interceptor/
-│   │   │       └── logger.go          # Log interceptor
-│   │   │
-│   │   └── consumer/                  # Nhận message từ broker (RabbitMQ, Kafka, NATS)
-│   │       └── handler.go             # Deserialize message, delegate tới service
+│   ├── transport/ -> udp/ ws/ (conn, handler, hub, server)
 │   │
-│   ├── external/                      # Outbound — chúng ta gọi ra ngoài
-│   │   ├── client/                    # Sync calls — gọi và chờ response
-│   │   │   └── example.go             # gRPC/HTTP client → external service
-│   │   └── messaging/                 # Async calls — publish và không chờ
-│   │       ├── publisher.go           # Gửi message lên queue/topic
-│   │       └── messages.go            # Định nghĩa message types
-│   │
-│   ├── shared/                        # Thêm khi có thứ dùng chung nhiều domain
-│   │   ├── enums.go                   # OrderStatus, PaymentStatus, Role...
-│   │   ├── types.go                   # UserID, Money, Timestamp...
-│   │   └── errors.go                  # ErrNotFound, ErrUnauthorized...
-│   │
-│   └── user/                          # Domain ví dụ — thay bằng domain thật của bạn
-│       ├── handler.go                 # HTTP layer: bind, validate, delegate
-│       ├── service.go                 # Interface — những gì domain này expose ra ngoài
-│       ├── service_impl.go            # Implementation — business logic
-│       ├── repository.go              # Interface — contract truy cập dữ liệu
-│       ├── model.go                   # Domain structs & DTOs
-│       └── postgres/
-│           └── repository.go          # Implement repository với Postgres
+│   ├── game/                        
+│   │   ├── loop/  -> ticker.go
+│   │   ├── player/ -> service.go
+│   │   └── state/ -> manager.go            
+│   │   
+        infra/ -> bus/ redis/ -> bus có bus iface, bus_nats.go, bus.go (redis/pubsub), redis có client.go
+
+        shared -> enums/ messages/ protocol/ -> enums có trangthai.go, messages có handshake.go, player_move.go, protocol có codec.go và msgtype.go 
 │
 ├── pkg/                               # Shared packages có thể export (rỗng mặc định)
 │

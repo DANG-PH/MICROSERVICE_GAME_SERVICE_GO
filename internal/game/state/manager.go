@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DANG-PH/game-service-go/internal/shared/messages"
+	"github.com/DANG-PH/game-service-go/internal/protocol"
 )
 
 // ============================================================================
@@ -57,8 +57,8 @@ type PlayerState struct {
 //   - Tách struct internal (PlayerState — có UpdatedAt, Dirty) khỏi DTO network (PlayerSync)
 //   - Giúp việc thay đổi internal struct không ảnh hưởng wire format
 //   - Tách hàm riêng để dễ test (input PlayerState, output PlayerSync)
-func (p *PlayerState) ToSync() *messages.PlayerSync {
-	return &messages.PlayerSync{
+func (p *PlayerState) ToSync() *protocol.PlayerSync {
+	return &protocol.PlayerSync{
 		UserID:         p.UserID,
 		X:              p.X,
 		Y:              p.Y,
@@ -93,8 +93,8 @@ func (p *PlayerState) ToSync() *messages.PlayerSync {
 // MỤC ĐÍCH:
 //   - Tránh duplicate logic Redis write — HandleMove đã có sẵn pipeline + dirty key
 //   - Tách hàm riêng để dễ test
-func (p *PlayerState) ToMove() *messages.PlayerMove {
-	return &messages.PlayerMove{
+func (p *PlayerState) ToMove() *protocol.PlayerMove {
+	return &protocol.PlayerMove{
 		MapID:          p.MapID,
 		X:              p.X,
 		Y:              p.Y,
@@ -167,7 +167,7 @@ func newMapState(mapID string) *MapState {
 // THREAD SAFETY: lock ms.mu (write lock vì có ghi)
 //
 // TODO: anti-cheat validation ở đây (max speed, collision với tường, ...)
-func (ms *MapState) UpdateFromMove(userID int32, m *messages.PlayerMove) {
+func (ms *MapState) UpdateFromMove(userID int32, m *protocol.PlayerMove) {
 	now := time.Now().UnixMilli()
 
 	ms.mu.Lock()

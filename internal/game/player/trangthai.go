@@ -1,4 +1,4 @@
-package enums
+package player
 
 // Trangthai enum - PHẢI khớp với Java enum TrangThai.java
 // Thứ tự ordinal quan trọng vì lưu thành byte.
