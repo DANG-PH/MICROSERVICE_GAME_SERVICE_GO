@@ -3,16 +3,16 @@ package player
 // Trangthai enum - PHẢI khớp với Java enum TrangThai.java
 // Thứ tự ordinal quan trọng vì lưu thành byte.
 const (
-	TrangthaiDungYen  uint8 = 0
-	TrangthaiDiChuyen uint8 = 1
-	TrangthaiNhay     uint8 = 2
-	TrangthaiRoi      uint8 = 3
-	TrangthaiBayNgang uint8 = 4
-	TrangthaiThu      uint8 = 5
-	TrangthaiGong     uint8 = 6
+	TrangthaiDungYen  byte = iota // 0
+	TrangthaiDiChuyen             // 1
+	TrangthaiNhay                 // 2
+	TrangthaiRoi                  // 3
+	TrangthaiBayNgang             // 4
+	TrangthaiThu                  // 5
+	TrangthaiGong                 // 6
 )
 
-var trangthaiToString = map[uint8]string{
+var trangthaiToString = map[byte]string{
 	TrangthaiDungYen:  "DUNG_YEN",
 	TrangthaiDiChuyen: "DI_CHUYEN",
 	TrangthaiNhay:     "NHAY",
@@ -22,7 +22,7 @@ var trangthaiToString = map[uint8]string{
 	TrangthaiGong:     "GONG",
 }
 
-var stringToTrangthai = map[string]uint8{
+var stringToTrangthai = map[string]byte{
 	"DUNG_YEN":  TrangthaiDungYen,
 	"DI_CHUYEN": TrangthaiDiChuyen,
 	"NHAY":      TrangthaiNhay,
@@ -32,14 +32,14 @@ var stringToTrangthai = map[string]uint8{
 	"GONG":      TrangthaiGong,
 }
 
-func TrangthaiToString(v uint8) string {
+func TrangthaiToString(v byte) string {
 	if s, ok := trangthaiToString[v]; ok {
 		return s
 	}
 	return "DUNG_YEN" // fallback
 }
 
-func StringToTrangthai(s string) uint8 {
+func StringToTrangthai(s string) byte {
 	if v, ok := stringToTrangthai[s]; ok {
 		return v
 	}

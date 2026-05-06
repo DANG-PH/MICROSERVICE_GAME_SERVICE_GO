@@ -126,8 +126,7 @@ func (s *Server) doHandshake(c *Conn) error {
 	c.SetUserID(authResult.UserID)
 
 	// Reply Ack.
-	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
-	if err := c.ws.WriteMessage(websocket.BinaryMessage, protocol.EncodeHandshakeAck()); err != nil {
+	if err := s.sendAck(c); err != nil {
 		return err
 	}
 
@@ -140,4 +139,12 @@ func (s *Server) doHandshake(c *Conn) error {
 func (s *Server) sendNack(c *Conn, reason uint8) {
 	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
 	c.ws.WriteMessage(websocket.BinaryMessage, protocol.EncodeHandshakeNack(reason))
+}
+
+func (s *Server) sendAck(c *Conn) error {
+	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
+	if err := c.ws.WriteMessage(websocket.BinaryMessage, protocol.EncodeHandshakeAck()); err != nil {
+		return err
+	}
+	return nil
 }

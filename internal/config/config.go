@@ -14,13 +14,9 @@ type Config struct {
 	RedisURL  string
 	JWTSecret string
 	LogLevel  string
-	// Cross-instance message bus config.
-	// Default dùng Redis Pub/Sub (UseNATS=false).
-	// Set USE_NATS=true để switch sang NATS — performance tốt hơn nhưng cần deploy NATS server.
-	UseNATS bool
-	NATSURL string
-	// Tick Rate
-	TickRate int
+	UseNATS   bool
+	NATSURL   string
+	TickRate  int
 }
 
 // Load đọc env vars. Trả về error nếu thiếu config bắt buộc.
@@ -43,6 +39,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// string -> string
 func getEnv(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -50,7 +47,7 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// Helper cho int env nếu sau này cần.
+// string -> int
 func getEnvInt(key string, defaultValue int) int {
 	if v := os.Getenv(key); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
@@ -60,9 +57,7 @@ func getEnvInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// getEnvBool parse string env thành bool.
-// Accept: "true", "1", "yes" → true. Còn lại → defaultValue.
-// Case-insensitive.
+// string -> bool
 func getEnvBool(key string, defaultValue bool) bool {
 	v := os.Getenv(key)
 	if v == "" {

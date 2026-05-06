@@ -18,8 +18,8 @@ type Ticker struct {
 	playerService *player.Service
 
 	interval      time.Duration
-	flushInterval time.Duration // thêm, mặc định 2s
-	lastFlush     time.Time     // thêm
+	flushInterval time.Duration
+	lastFlush     time.Time
 	stopCh        chan struct{}
 }
 

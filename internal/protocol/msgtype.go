@@ -25,6 +25,18 @@ const PROTOCOL_VERSION uint16 = 1
 //   Kiểm soát từng byte — biết chính xác packet trông như thế nào.
 //   Không có overhead nào ngoài data thật sự cần gửi.
 //   Phù hợp để học và cho game nhỏ đến trung bình.
+// Sau này prod có thể lên Protobuf
+// Ưu điểm:
+// - Varint (có thể giảm bandwidth nếu tối ưu đúng)
+// - Schema validation tại compile time khi generate code từ .proto
+// - Thêm sửa field dễ dàng
+// - Trông Human Language hơn -> dễ dev/test hơn/người mới - dev khác đọc proto là hiểu ngay đang làm gì
+// - Cross-language dễ dàng -> phải viết ít parser hơn
+// - Có tool nhiều
+// Nhược điểm:
+// - Học được ít hơn (nên upgrade sau khi custom binary thành công)
+// - Control k được tốt bằng custom binary vì phụ thuộc bên thứ 3
+// - Latency cao hơn (mặc dù chỉ vài microseconds)
 
 // Message types.
 // Client → Server: 0x01 - 0x7F

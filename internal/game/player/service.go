@@ -41,7 +41,7 @@ func (s *Service) HandleMove(ctx context.Context, userID int32, m *protocol.Play
 	key := fmt.Sprintf("GAME:PLAYER:%d", userID)
 	dirtyKey := fmt.Sprintf("dirty:%d", userID)
 
-	// Convert trangthai từ uint8 enum sang string để khớp với NestJS Redis format.
+	// Convert trangthai từ byte enum sang string để khớp với NestJS Redis format.
 	trangthaiStr := TrangthaiToString(m.Trangthai)
 
 	// Pipeline: gửi nhiều command trong 1 round-trip.

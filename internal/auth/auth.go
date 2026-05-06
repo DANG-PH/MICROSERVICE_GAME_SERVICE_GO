@@ -21,6 +21,7 @@ import (
 // JWT chỉ chứng minh "ai" — gameSession chứng minh "session nào còn hợp lệ".
 // User login lại trên thiết bị khác → NestJS đổi gameSession trong Redis → JWT cũ vẫn valid
 // nhưng gameSession không khớp → reject. Đây là pattern revocation cho JWT (vốn không có built-in).
+// Còn có cách khác k cần dùng JWT là set thêm session:gameSession -> userId (nhưng trade off là tốn thêm N keys với N user, cũng k đáng lắm)
 type Authenticator struct {
 	jwtSecret []byte
 	redis     *redis.Client
