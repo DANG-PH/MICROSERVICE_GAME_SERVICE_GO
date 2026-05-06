@@ -375,3 +375,271 @@ Tới đây = mọi thứ cleanup gọn gàng. Hàm `main()` return → process 
 | **Defer** | Chạy hàm khi function hiện tại kết thúc (giống finally) |
 
 > NestJS/Node che giấu hầu hết những thứ này qua các abstraction (`process` global, EventEmitter, async/await, `app.enableShutdownHooks`). Go thì lộ rõ ra — học khó hơn nhưng hiểu sâu hơn về system programming.
+
+---
+---
+
+# Giải thích `app.go` — Game Service Go
+
+---
+
+## `app.go` là gì? So sánh với `main.go` và NestJS
+
+Trước khi đọc chi tiết, cần hiểu rõ **ai làm gì**:
+
+| | `main.go` | `app.go` |
+|---|---|---|
+| **Vai trò** | Entry point — điểm khởi đầu của chương trình | Wiring layer — nơi lắp ghép mọi component |
+| **NestJS tương đương** | `main.ts` (bootstrap) | `AppModule` + `NestFactory` gộp lại |
+| **Làm gì** | Load .env, init logger, bắt signal OS, gọi shutdown | Khởi tạo Redis/Bus/Hub/Handler, đăng ký routes, start/stop server |
+| **Biết gì về business** | Không biết gì — chỉ biết `app.New`, `app.Run`, `app.Shutdown` | Biết tất cả: service, infra, transport |
+| **Khi thêm feature mới** | Không cần sửa | Thêm dep mới vào `New()` |
+
+**Tại sao tách `main.go` và `app.go`?**
+
+Nếu nhét tất cả vào `main.go`: hàm `main()` sẽ dài 200 dòng, khó test, khó đọc. Tách ra thì:
+- `main.go` chỉ lo OS-level (signal, exit code, env)
+- `app.go` lo application-level (dependency wiring, lifecycle)
+- Test có thể tạo `app.New(mockCfg, mockLog)` mà không cần chạy cả OS machinery
+
+> **So với NestJS:** NestJS ẩn toàn bộ wiring sau decorator (`@Injectable`, `@Module`). Go không có magic — bạn tự wire thủ công trong `New()`. Verbose hơn nhưng đọc code là biết ngay luồng đi.
+
+---
+
+## Struct `App` — "Container" của Go
+
+```go
+type App struct {
+    cfg    *config.Config
+    log    *slog.Logger
+    server *http.Server
+    bus    bus.BusInterface
+    ticker *loop.Ticker
+    hub    *ws.Hub
+}
+```
+
+Struct `App` gom tất cả các component cần quản lý lifecycle vào một chỗ. Đây là **manual dependency container** của Go.
+
+> **So với NestJS:** NestJS có IoC container tự động quản lý — `@Injectable()` + `@Module(providers: [...])` → NestJS tự tạo instance, inject dep, quản lý lifecycle. Go không có IoC container — bạn tự tạo instance và lưu vào struct.
+
+Tất cả field đều là **pointer** (`*config.Config`, `*http.Server`...):
+- Pointer = lưu địa chỉ, không copy toàn bộ struct
+- Method có thể **mutate** field (ví dụ `server.Shutdown()` thay đổi state của server)
+- Các component chia sẻ cùng instance — `hub` trong `New()` và `hub` trong `Run()` là **một object**
+
+Field `bus bus.BusInterface` dùng **interface** thay vì concrete type → có thể swap giữa Redis bus và NATS bus mà không sửa phần còn lại của code. Đây là Dependency Inversion (chữ D trong SOLID).
+
+---
+
+## Hàm `New()` — Constructor / Wiring
+
+```go
+func New(cfg *config.Config, log *slog.Logger) (*App, error)
+```
+
+`New()` là nơi **toàn bộ dependency được khởi tạo và wire với nhau**. Đọc theo thứ tự từ trên xuống là thấy ngay dependency graph của app.
+
+> **So với NestJS:** tương đương `AppModule` + `NestFactory.create()` gộp lại, nhưng viết tường minh thay vì dùng decorator.
+
+### Khởi tạo Redis
+
+```go
+rdb, err := redisclient.New(cfg.RedisURL)
+```
+
+Redis client dùng cho business logic (lưu player state, session...). Nếu connect fail → `return nil, fmt.Errorf("init redis: %w", err)` → `main.go` nhận error và exit.
+
+**`fmt.Errorf("init redis: %w", err)`** — wrap error với context:
+- `%w` là verb đặc biệt để **wrap** error gốc bên trong error mới
+- Kết quả: `"init redis: connection refused"` thay vì chỉ `"connection refused"`
+- Người đọc log biết ngay lỗi xảy ra ở tầng nào
+- Caller có thể dùng `errors.Is()` / `errors.As()` để unwrap kiểm tra loại lỗi
+
+### Chọn Bus theo config
+
+```go
+if cfg.UseNATS {
+    b, err = bus.NewNATSBus(cfg.NATSURL, log)
+} else {
+    b, err = bus.NewRedisBus(cfg.RedisURL, log)
+}
+```
+
+**Bus** là gì? Khi deploy nhiều instance (horizontal scaling), các instance cần giao tiếp với nhau — ví dụ player A ở instance 1 move, instance 2 cũng phải broadcast cho client của nó. Bus là kênh truyền message **cross-instance**.
+
+- **Redis Bus**: đơn giản, dùng Redis Pub/Sub — đã có Redis sẵn thì dùng luôn
+- **NATS Bus**: message broker chuyên dụng — nhanh hơn, reliable hơn, dùng khi scale lớn
+
+Dùng `BusInterface` → code còn lại không cần biết đang dùng loại nào.
+
+### Wire các component
+
+```go
+stateManager := state.NewManager()
+hub          := ws.NewHub(log, b, stateManager)
+auth         := auth.NewAuthenticator(cfg.JWTSecret, rdb)
+playerService := player.NewService(rdb)
+handler      := ws.NewHandler(log, hub, stateManager, playerService)
+ticker       := loop.NewTicker(log, hub, stateManager, playerService, tickInterval)
+```
+
+Đọc từ trên xuống là thấy rõ dependency graph:
+
+```
+rdb ──────────────────────────┐
+                              ├─→ playerService ──→ handler
+stateManager ──┬─→ hub ───────┤                    │
+               │              └─→ ticker            │
+               └──────────────────────────────────→ handler
+b (bus) ───────→ hub
+cfg.JWTSecret ─→ auth ──────────────────────────→ wsServer
+```
+
+> **So với NestJS:** NestJS làm điều này tự động qua `providers` array trong `@Module`. Go làm thủ công — dài hơn nhưng không có "magic", dễ debug khi có vấn đề về DI.
+
+### TickRate
+
+```go
+time.Second / time.Duration(cfg.TickRate)
+```
+
+`cfg.TickRate = 20` → `time.Second / 20` = 50ms mỗi tick = 20 lần broadcast/giây (20Hz).
+
+Tách ra config để tune theo môi trường:
+- Dev: 10Hz (đỡ noisy log)
+- Prod: 20Hz (smooth gameplay)
+- Stress test: 30Hz
+
+### HTTP Server config
+
+```go
+server := &http.Server{
+    Addr:              ":" + cfg.HTTPPort,
+    Handler:           mux,
+    ReadHeaderTimeout: 5 * time.Second,
+}
+```
+
+**Slowloris attack**: client cố tình gửi HTTP header **cực chậm** (1 byte/giây) để giữ connection mãi không release, dần dần làm server hết connection pool. `ReadHeaderTimeout: 5s` — nếu 5 giây chưa nhận xong header thì đóng connection.
+
+**Không set `ReadTimeout`/`WriteTimeout`** — vì WebSocket là long-lived connection. Nếu set timeout thì server sẽ kill WebSocket connection sau vài giây, game sẽ disconnect liên tục. WebSocket có cơ chế ping/pong riêng để detect dead connection.
+
+### Healthcheck endpoint
+
+```go
+mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+    totalConns, totalRooms := hub.Stats()
+    fmt.Fprintf(w, "ok\nnodeID=%s\nconns=%d\nrooms=%d\n", b.NodeID(), totalConns, totalRooms)
+})
+```
+
+K8s/load balancer gọi `/health` để biết instance có còn sống không. Thêm `nodeID` để debug multi-instance: khi `curl /health` nhiều lần, biết được đang hit instance nào (load balancer round-robin).
+
+---
+
+## Hàm `Run()` — Start
+
+```go
+func (a *App) Run() error
+```
+
+Start tất cả component theo **đúng thứ tự**. Thứ tự quan trọng vì dependency:
+
+1. **Bus start trước** — nếu bus chưa chạy mà có WebSocket connection vào, message từ instance khác sẽ bị miss
+2. **Ticker start** — bắt đầu broadcast loop 20Hz
+3. **HTTP server listen** — bắt đầu nhận connection (blocking)
+
+**`(a *App)` — Method Receiver:**
+
+Go không có class. Thay vào đó, hàm có thể "gắn" vào struct qua receiver:
+- `func (a *App) Run()` — hàm `Run` thuộc về `*App`
+- Gọi bằng `a.Run()` — giống method trong OOP
+- Dùng pointer receiver `*App` để có thể đọc/modify field của `App`
+
+> Tương đương `method` trong class NestJS, nhưng Go không có `class` — chỉ có `struct` + function với receiver.
+
+**`context.Background()` trong `Run()`:**
+
+Bus và ticker được start với `context.Background()` — context không bao giờ tự cancel. Chúng chạy đến khi `Stop()` được gọi tường minh trong `Shutdown()`. Comment `TODO: anti-pattern` vì lý tưởng hơn là truyền context từ bên ngoài vào (cho phép cancel từ caller), nhưng cần refactor lifecycle management.
+
+**`http.ErrServerClosed`:**
+
+```go
+if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+    return err
+}
+```
+
+Khi `Shutdown()` được gọi, `ListenAndServe()` sẽ return `http.ErrServerClosed` — đây là **expected behavior**, không phải lỗi thật. Nên bỏ qua nó, chỉ return error nếu là lỗi thật (ví dụ port đã bị chiếm).
+
+---
+
+## Hàm `Shutdown()` — Graceful Stop
+
+```go
+func (a *App) Shutdown(ctx context.Context) error
+```
+
+Stop tất cả component theo **thứ tự ngược lại** với `Run()`, có tính toán kỹ:
+
+### Thứ tự shutdown và lý do
+
+```
+1. HTTP server.Shutdown(ctx)   ← stop nhận conn mới, đợi conn hiện tại xong
+2. ticker.Stop()               ← stop broadcast loop
+3. bus.Stop()                  ← stop message bus
+4. hub.Close()                 ← drain publish channel, worker goroutine tự thoát
+```
+
+**Tại sao thứ tự này?**
+
+Nếu stop bus trước: connection còn lại muốn broadcast sẽ fail publish → log noise, error không cần thiết.
+
+Ticker stop sau HTTP server vì: trong lúc `server.Shutdown()` đang chờ connection đóng, connection vẫn có thể nhận snapshot tick cuối cùng → gameplay smooth đến tận phút cuối. Stop tick trước → client bị "đứng hình" vài giây cuối trước khi disconnect → trải nghiệm xấu hơn.
+
+Hub close sau cùng để goroutine worker có thể **drain hết** job còn trong publish channel trước khi thoát — tránh mất message.
+
+**`server.Shutdown(ctx)` vs `server.Close()`:**
+
+- `server.Close()` — đóng tất cả connection ngay lập tức (brutal)
+- `server.Shutdown(ctx)` — stop nhận connection mới, đợi connection đang xử lý hoàn thành, timeout theo ctx (graceful)
+
+**Vẫn tiếp tục dù HTTP shutdown lỗi:**
+
+```go
+if err := a.server.Shutdown(ctx); err != nil {
+    a.log.Warn("http server shutdown error", "err", err)
+    // không return — vẫn phải stop bus/ticker/hub
+}
+```
+
+Dù HTTP server shutdown có lỗi (ví dụ timeout), vẫn phải dọn dẹp các component còn lại. Nếu `return` sớm thì bus/ticker/hub sẽ **leak** — goroutine chạy mãi sau khi process tưởng đã shutdown xong.
+
+---
+
+## Tổng kết — So sánh `main.go` vs `app.go` vs NestJS
+
+```
+NestJS                          Go
+──────────────────────────────────────────────────────
+main.ts                         main.go
+  bootstrap()                     main()
+  NestFactory.create(AppModule)     app.New(cfg, log)
+  app.listen(3000)                  go func() { a.Run() }()
+  app.enableShutdownHooks()         signal.Notify(sigCh, ...)
+                                    a.Shutdown(ctx)
+
+AppModule                       app.go
+  @Module({                       type App struct { ... }
+    imports: [...],               func New(...) (*App, error) {
+    providers: [...],               // manual wiring
+    controllers: [...],           }
+  })
+  OnModuleInit()                  func (a *App) Run() error
+  OnApplicationShutdown()         func (a *App) Shutdown(ctx) error
+```
+
+**Điểm khác biệt cốt lõi:**
+
+NestJS dùng **decorator + IoC container** — khai báo dependency, framework tự resolve. Go dùng **manual wiring** — bạn tự new từng thứ, tự truyền vào. Verbose hơn nhưng không có hidden magic, dễ trace bug hơn khi có vấn đề về dependency.

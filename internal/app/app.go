@@ -20,26 +20,24 @@ import (
 	"github.com/DANG-PH/game-service-go/internal/config"
 )
 
-// App gom mọi component và quản lý lifecycle (start/stop).
 type App struct {
 	cfg    *config.Config
 	log    *slog.Logger
 	server *http.Server
-	bus    bus.BusInterface // cross-instance message bus, cần Stop() khi shutdown
+	bus    bus.BusInterface
 	ticker *loop.Ticker
 	hub    *ws.Hub
 }
 
-// New khởi tạo app: load deps, wire components.
-// Nếu khởi tạo fail → return error → main.go log và exit.
 func New(cfg *config.Config, log *slog.Logger) (*App, error) {
-	// Redis client cho business logic (player state, session, ...).
+	// Redis client
 	rdb, err := redisclient.New(cfg.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("init redis: %w", err)
 	}
 	log.Info("redis connected", "url", cfg.RedisURL)
 
+	// Message Broker
 	var b bus.BusInterface
 	if cfg.UseNATS {
 		log.Info("using NATS bus")
@@ -56,10 +54,10 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	// Tick loop sẽ đọc state này để broadcast.
 	stateManager := state.NewManager()
 
-	// Hub - quản lý WebSocket connections, wire bus để broadcast cross-instance.
+	// Hub - quản lý WebSocket connections, wire bus, stateManager để broadcast cross-instance.
 	hub := ws.NewHub(log, b, stateManager)
 
-	// Auth - verify JWT + gameSession.
+	// Auth - verify JWT + gameSession, wire rdb.
 	auth := auth.NewAuthenticator(cfg.JWTSecret, rdb)
 
 	// Player service - logic xử lý move, update Redis.
@@ -74,10 +72,6 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	)
 
 	// Tick loop — broadcast snapshot mỗi 50ms (20Hz).
-	// Tách interval ra config nếu sau này muốn tune theo môi trường:
-	//   - Dev: 100ms (đỡ noisy log)
-	//   - Prod: 50ms (smooth gameplay)
-	//   - Stress test: 33ms (30Hz)
 	ticker := loop.NewTicker(log, hub, stateManager, playerService, time.Second/time.Duration(cfg.TickRate))
 
 	// WebSocket server - HTTP upgrade endpoint.
@@ -114,7 +108,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	}, nil
 }
 
-// Run start HTTP server và bus subscriber. Block tới khi server fail hoặc Shutdown được gọi.
+// Run start HTTP server
 func (a *App) Run() error {
 	// Start bus subscriber TRƯỚC khi accept WebSocket connection.
 	// Nếu bus chưa start mà có conn vào → broadcast từ instance khác bị miss.
@@ -137,18 +131,8 @@ func (a *App) Run() error {
 
 // Shutdown graceful — đợi current connection xong rồi mới close.
 // Đặt timeout để không treo mãi nếu có connection stuck.
-//
-// Thứ tự shutdown quan trọng:
-//  1. HTTP server stop accept conn mới + đợi conn hiện tại
-//  2. Tick loop stop (không broadcast nữa, không ai nhận anyway vì conn đã close)
-//  3. Bus stop
-//
-// Nếu đảo ngược: bus stop trước → conn còn lại broadcast sẽ fail publish → log noise.
-// Tại sao tick loop stop SAU HTTP server?
-// - Trong lúc server.Shutdown() đang đợi conn close, conn vẫn có thể nhận snapshot cuối.
-// - Stop tick trước → conn nhận trải nghiệm "đứng hình" trong vài giây cuối → xấu hơn.
-// - Stop tick sau → smooth tới phút cuối.
 func (a *App) Shutdown(ctx context.Context) error {
+	// Thứ tự shutdown cũng rất quan trọng
 	a.log.Info("server shutting down")
 
 	if err := a.server.Shutdown(ctx); err != nil {
@@ -156,9 +140,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 		a.log.Warn("http server shutdown error", "err", err)
 	}
 
+	// tick loop stop SAU HTTP server
+	// - Stop tick trước → conn nhận trải nghiệm "đứng hình" trong vài giây cuối → xấu hơn.
+	// - Stop tick sau → smooth tới phút cuối.
 	a.ticker.Stop()
 	a.log.Info("tick loop stopped")
 
+	// nếu bus stop trước → conn còn lại broadcast sẽ fail publish → log noise.
 	a.bus.Stop()
 	a.log.Info("bus stopped")
 
