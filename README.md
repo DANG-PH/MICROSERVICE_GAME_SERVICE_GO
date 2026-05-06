@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="https://raw.githubusercontent.com/DANG-PH/MICROSERVICE_GAME_SERVICE_GO/master/golang.png" alt="Go Gopher" width="100"/>
+  <img src="https://raw.githubusercontent.com/DANG-PH/DANG-PH/main/go-trans.png" alt="Go Gopher" width="100"/>
 
   <h1>Golang Base</h1>
 
