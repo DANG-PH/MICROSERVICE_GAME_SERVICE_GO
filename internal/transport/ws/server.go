@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/DANG-PH/game-service-go/internal/auth"
-	"github.com/DANG-PH/game-service-go/internal/protocol"
+	pb "github.com/DANG-PH/game-service-go/internal/protocol/pb"
 )
 
 // Server là HTTP handler upgrade WebSocket và xử lý handshake.
@@ -29,9 +30,7 @@ func NewServer(log *slog.Logger, hub *Hub, auth *auth.Authenticator, handler *Ha
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
-			// CheckOrigin: cho phép mọi origin vì client là LibGDX (không phải browser).
-			// Browser sẽ enforce same-origin từ phía nó. Game client native không.
-			CheckOrigin: func(r *http.Request) bool { return true },
+			CheckOrigin:     func(r *http.Request) bool { return true },
 		},
 		hub:     hub,
 		auth:    auth,
@@ -88,37 +87,47 @@ func (s *Server) doHandshake(c *Conn) error {
 		return err
 	}
 
-	if msgType != websocket.BinaryMessage || len(data) < 1 || data[0] != protocol.MsgHandshake {
-		s.sendNack(c, protocol.NackReasonInternal)
+	if msgType != websocket.BinaryMessage {
+		s.sendNack(c, pb.NackReason_NACK_REASON_INTERNAL)
 		return websocket.ErrBadHandshake
 	}
 
-	var hs protocol.Handshake
-	if err := hs.Decode(data[1:]); err != nil {
-		s.sendNack(c, protocol.NackReasonInternal)
+	// Unmarshal Envelope — thay cho check data[0] + custom Decode
+	var env pb.Envelope
+	if err := proto.Unmarshal(data, &env); err != nil {
+		s.sendNack(c, pb.NackReason_NACK_REASON_INTERNAL)
 		return err
 	}
 
-	// Check version.
-	if hs.ProtocolVersion != protocol.PROTOCOL_VERSION {
-		s.sendNack(c, protocol.NackReasonVersion)
-		s.log.Info("version mismatch", "client", hs.ProtocolVersion, "server", protocol.PROTOCOL_VERSION)
+	// Kiểm tra đúng loại message
+	hsPayload, ok := env.Payload.(*pb.Envelope_Handshake)
+	if !ok {
+		s.sendNack(c, pb.NackReason_NACK_REASON_INTERNAL)
+		return websocket.ErrBadHandshake
+	}
+	hs := hsPayload.Handshake
+
+	// Check version — PROTOCOL_VERSION giờ là const Go thường, không còn trong protocol package
+	const protocolVersion uint32 = 1
+	if hs.ProtocolVersion != protocolVersion {
+		s.sendNack(c, pb.NackReason_NACK_REASON_VERSION)
+		s.log.Info("version mismatch", "client", hs.ProtocolVersion, "server", protocolVersion)
 		return websocket.ErrBadHandshake
 	}
 
-	// Verify auth.
+	// Verify auth
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	authResult, err := s.auth.Verify(ctx, hs.Token, hs.GameSessionID, hs.UserID)
+	authResult, err := s.auth.Verify(ctx, hs.Token, hs.GameSessionId, hs.UserId)
 	if err != nil {
 		switch err {
 		case auth.ErrInvalidToken, auth.ErrUserIDMismatch:
-			s.sendNack(c, protocol.NackReasonAuth)
+			s.sendNack(c, pb.NackReason_NACK_REASON_AUTH)
 		case auth.ErrInvalidSession:
-			s.sendNack(c, protocol.NackReasonSession)
+			s.sendNack(c, pb.NackReason_NACK_REASON_SESSION)
 		default:
-			s.sendNack(c, protocol.NackReasonInternal)
+			s.sendNack(c, pb.NackReason_NACK_REASON_INTERNAL)
 		}
 		return err
 	}
@@ -136,15 +145,24 @@ func (s *Server) doHandshake(c *Conn) error {
 	return nil
 }
 
-func (s *Server) sendNack(c *Conn, reason uint8) {
+func (s *Server) sendNack(c *Conn, reason pb.NackReason) {
+	msg := &pb.Envelope{
+		Payload: &pb.Envelope_HandshakeNack{
+			HandshakeNack: &pb.HandshakeNack{Reason: reason},
+		},
+	}
+	data, _ := proto.Marshal(msg)
 	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
-	c.ws.WriteMessage(websocket.BinaryMessage, protocol.EncodeHandshakeNack(reason))
+	c.ws.WriteMessage(websocket.BinaryMessage, data)
 }
 
 func (s *Server) sendAck(c *Conn) error {
-	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
-	if err := c.ws.WriteMessage(websocket.BinaryMessage, protocol.EncodeHandshakeAck()); err != nil {
-		return err
+	msg := &pb.Envelope{
+		Payload: &pb.Envelope_HandshakeAck{
+			HandshakeAck: &pb.HandshakeAck{},
+		},
 	}
-	return nil
+	data, _ := proto.Marshal(msg)
+	c.ws.SetWriteDeadline(time.Now().Add(time.Second))
+	return c.ws.WriteMessage(websocket.BinaryMessage, data)
 }

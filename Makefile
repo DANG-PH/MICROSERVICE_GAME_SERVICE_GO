@@ -70,3 +70,17 @@ docker/build:
 
 docker/run:
 	docker run --env-file .env -p 8080:8080 game-service-go
+
+proto:
+	@mkdir -p internal/protocol/pb
+	protoc \
+		--proto_path=proto \
+		--go_out=internal/protocol/pb \
+		--go_opt=paths=source_relative \
+		proto/game.proto
+	@echo "✓ Generated: internal/protocol/pb/game.pb.go"
+
+proto-win:
+	if not exist internal\protocol\pb mkdir internal\protocol\pb
+	protoc --proto_path=proto --go_out=internal/protocol/pb --go_opt=paths=source_relative proto/game.proto
+	@echo "✓ Generated: internal/protocol/pb/game.pb.go"

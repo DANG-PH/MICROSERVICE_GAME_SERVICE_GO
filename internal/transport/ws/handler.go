@@ -3,19 +3,26 @@ package ws
 import (
 	"log/slog"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/DANG-PH/game-service-go/internal/game/player"
 	"github.com/DANG-PH/game-service-go/internal/game/state"
-	"github.com/DANG-PH/game-service-go/internal/protocol"
+	pb "github.com/DANG-PH/game-service-go/internal/protocol/pb"
 )
 
-// Handler là nơi route message theo msgType byte đầu tiên.
-// Mỗi msgType có 1 case xử lý riêng.
+// Handler là nơi route message theo Envelope.oneof.
+// Mỗi message type có 1 case xử lý riêng.
 //
 // Pattern này gọi là "dispatcher" — đơn giản, dễ đọc, không cần reflection.
-// Khi thêm message mới: thêm const ở protocol/msgtype.go, thêm case ở đây, tạo file message struct.
+// Khi thêm message mới: thêm message vào game.proto, generate lại, thêm case ở đây.
 // - KHÔNG broadcast trực tiếp — chỉ update state.
 // - Tick loop sẽ broadcast 20Hz.
 // - Vẫn giữ Redis update (cần cho NestJS đọc + cron flush DB).
+//
+// THAY ĐỔI SO VỚI CUSTOM BINARY:
+//   - Không còn switch data[0] msgType — thay bằng proto.Unmarshal + switch env.Payload.(type)
+//   - Không cần tách data[1:] payload riêng nữa
+//   - Khi thêm message mới: thêm vào game.proto thay vì thêm const ở protocol/msgtype.go
 type Handler struct {
 	log           *slog.Logger
 	hub           *Hub
@@ -39,21 +46,26 @@ func NewHandler(log *slog.Logger,
 // Handle implement MessageHandler interface.
 // Được gọi từ Conn.readLoop mỗi khi có message từ client.
 //
-// data[0] = msgType, data[1:] = payload.
+// THAY ĐỔI SO VỚI CUSTOM BINARY:
+//   - Cũ: msgType := data[0], payload := data[1:], switch msgType
+//   - Mới: proto.Unmarshal toàn bộ data → switch env.Payload.(type)
 func (h *Handler) Handle(c *Conn, data []byte) {
 	if len(data) == 0 {
 		return
 	}
 
-	msgType := data[0]
-	payload := data[1:]
+	var env pb.Envelope
+	if err := proto.Unmarshal(data, &env); err != nil {
+		h.log.Warn("unmarshal envelope failed", "err", err, "userID", c.userID)
+		return
+	}
 
-	switch msgType {
-	case protocol.MsgPlayerMove:
-		h.handlePlayerMove(c, payload)
+	switch p := env.Payload.(type) {
+	case *pb.Envelope_PlayerMove:
+		h.handlePlayerMove(c, p.PlayerMove)
 
 	default:
-		h.log.Warn("unknown message type", "type", msgType, "userID", c.userID)
+		h.log.Warn("unknown message type", "userID", c.userID)
 	}
 }
 
@@ -84,19 +96,18 @@ func (h *Handler) switchMap(c *Conn, newMapID string) *state.MapState {
 	return h.manager.GetOrCreateMap(newMapID) // đảm bảo MapState tồn tại
 }
 
-func (h *Handler) handlePlayerMove(c *Conn, payload []byte) {
-	var m protocol.PlayerMove
-	if err := m.Decode(payload); err != nil {
-		h.log.Warn("decode PlayerMove failed", "err", err, "userID", c.userID)
-		return
-	}
-
+// handlePlayerMove nhận *pb.PlayerMove trực tiếp — không cần decode thủ công như custom binary.
+//
+// THAY ĐỔI SO VỚI CUSTOM BINARY:
+//   - Cũ: handlePlayerMove(c *Conn, payload []byte) → m.Decode(payload)
+//   - Mới: handlePlayerMove(c *Conn, m *pb.PlayerMove) — proto đã unmarshal từ Handle()
+func (h *Handler) handlePlayerMove(c *Conn, m *pb.PlayerMove) {
 	var ms *state.MapState
-	if c.mapID != m.MapID {
-		ms = h.switchMap(c, m.MapID) // atomic từ góc nhìn handler
+	if c.mapID != m.MapId {
+		ms = h.switchMap(c, m.MapId) // atomic từ góc nhìn handler
 	} else {
-		ms = h.manager.GetOrCreateMap(m.MapID)
+		ms = h.manager.GetOrCreateMap(m.MapId)
 	}
 
-	ms.UpdateFromMove(c.userID, &m)
+	ms.UpdateFromMove(c.userID, m)
 }

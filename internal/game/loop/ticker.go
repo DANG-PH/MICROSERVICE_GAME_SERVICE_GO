@@ -5,9 +5,11 @@ import (
 	"log/slog"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/DANG-PH/game-service-go/internal/game/player"
 	"github.com/DANG-PH/game-service-go/internal/game/state"
-	"github.com/DANG-PH/game-service-go/internal/protocol"
+	pb "github.com/DANG-PH/game-service-go/internal/protocol/pb"
 	"github.com/DANG-PH/game-service-go/internal/transport/ws"
 )
 
@@ -102,15 +104,27 @@ func (t *Ticker) tick() {
 		}
 
 		// Broadcast
-		syncs := make([]protocol.PlayerSync, len(dirty))
 		now := time.Now().UnixMilli()
+		pbPlayers := make([]*pb.PlayerSync, len(dirty))
 		for i := range dirty {
 			s := dirty[i].ToSync()
 			s.ServerTime = now
-			syncs[i] = *s
+			pbPlayers[i] = s
 		}
-		batch := &protocol.PlayerSyncBatch{Players: syncs}
-		t.hub.BroadcastToMap(ms.MapID, batch.Encode(), nil)
+
+		// Marshal Envelope thay vì batch.Encode()
+		msg := &pb.Envelope{
+			Payload: &pb.Envelope_PlayerSyncBatch{
+				PlayerSyncBatch: &pb.PlayerSyncBatch{Players: pbPlayers},
+			},
+		}
+		data, err := proto.Marshal(msg)
+		if err != nil {
+			t.log.Warn("marshal PlayerSyncBatch failed", "err", err)
+			continue
+		}
+
+		t.hub.BroadcastToMap(ms.MapID, data, nil)
 		totalPackets++
 
 		// Gom RedisDirty — chưa flush, gom hết tất cả map rồi flush 1 lần
@@ -142,6 +156,8 @@ func (t *Ticker) tick() {
 	} else if elapsed > t.interval/2 {
 		// info: bắt đầu nặng
 	}
+
+	_ = totalPackets
 }
 
 // =========================================================================

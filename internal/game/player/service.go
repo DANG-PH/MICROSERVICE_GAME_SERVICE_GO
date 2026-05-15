@@ -1,4 +1,3 @@
-// internal/game/player/service.go
 package player
 
 import (
@@ -7,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/DANG-PH/game-service-go/internal/protocol"
+	pb "github.com/DANG-PH/game-service-go/internal/protocol/pb"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -37,7 +36,7 @@ func NewService(rdb *redis.Client) *Service {
 //
 // Tối ưu sau (Phase 2): batch HSET pipeline mỗi tick thay vì mỗi move.
 // Cách này dùng Cho cách 1 và cách 2 (Đọc ở Cuối file ticker.go để biết, có trade off là N round trip per player)
-func (s *Service) HandleMove(ctx context.Context, userID int32, m *protocol.PlayerMove) error {
+func (s *Service) HandleMove(ctx context.Context, userID int32, m *pb.PlayerMove) error {
 	key := fmt.Sprintf("GAME:PLAYER:%d", userID)
 	dirtyKey := fmt.Sprintf("dirty:%d", userID)
 
@@ -60,7 +59,7 @@ func (s *Service) HandleMove(ctx context.Context, userID int32, m *protocol.Play
 		"dir":            int(m.Dir),
 		"dau":            m.Dau,
 		"than":           m.Than,
-		"chan":           m.Chan,
+		"chan":           m.ChanField,
 		"timeChoHienBay": strconv.FormatFloat(float64(m.TimeChoHienBay), 'f', -1, 32),
 		"lechDauX":       strconv.FormatFloat(float64(m.LechDauX), 'f', -1, 32),
 		"lechDauY":       strconv.FormatFloat(float64(m.LechDauY), 'f', -1, 32),
@@ -82,7 +81,7 @@ func (s *Service) HandleMove(ctx context.Context, userID int32, m *protocol.Play
 // Cần struct riêng vì k thể thêm userID vào PlayerMove (cái này do client gửi lên, gửi thêm userID sẽ sai về mặt protocol)
 type PlayerMoveWithID struct {
 	UserID int32
-	Move   *protocol.PlayerMove
+	Move   *pb.PlayerMove
 }
 
 // HandleMoveBatch flush toàn bộ dirty players vào Redis trong 1 round-trip duy nhất.
@@ -122,7 +121,7 @@ func (s *Service) HandleMoveBatch(ctx context.Context, players []PlayerMoveWithI
 			"dir":            int(p.Move.Dir),
 			"dau":            p.Move.Dau,
 			"than":           p.Move.Than,
-			"chan":           p.Move.Chan,
+			"chan":           p.Move.ChanField,
 			"timeChoHienBay": strconv.FormatFloat(float64(p.Move.TimeChoHienBay), 'f', -1, 32),
 			"lechDauX":       strconv.FormatFloat(float64(p.Move.LechDauX), 'f', -1, 32),
 			"lechDauY":       strconv.FormatFloat(float64(p.Move.LechDauY), 'f', -1, 32),

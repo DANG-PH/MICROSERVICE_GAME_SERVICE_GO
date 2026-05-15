@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DANG-PH/game-service-go/internal/protocol"
+	pb "github.com/DANG-PH/game-service-go/internal/protocol/pb"
 )
 
 // ============================================================================
@@ -16,18 +16,24 @@ import (
 // có thể tái tạo PlayerSync packet ngay, không cần lookup thêm.
 //
 // Memory: ~150 byte/player (do có nhiều string). 1000 player ≈ 150KB → ổn.
+//
+// THAY ĐỔI SO VỚI CUSTOM BINARY:
+//   - Trangthai uint8 → uint32  (proto không có uint8)
+//   - Dir int8 → int32          (proto không có int8)
+//   - Chan string → ChanField   ("chan" là keyword Go, protoc-gen-go không generate được)
+//   - ToSync/ToMove trả *pb.PlayerSync / *pb.PlayerMove thay vì custom binary struct
 type PlayerState struct {
 	UserID int32
 	MapID  string
 
-	// Tất cả field này khớp với PlayerSync để Encode() trả về đúng định dạng.
+	// Tất cả field này khớp với PlayerSync để ToSync() trả về đúng định dạng.
 	X              float32
 	Y              float32
-	Trangthai      uint8
-	Dir            int8
+	Trangthai      uint32 // uint8 → uint32, khớp proto
+	Dir            int32  // int8 → int32, khớp proto
 	Dau            string
 	Than           string
-	Chan           string
+	ChanField      string // "chan" là keyword Go → đổi thành ChanField; Redis key vẫn là "chan"
 	TimeChoHienBay float32
 	LechDauX       float32
 	LechDauY       float32
@@ -57,16 +63,16 @@ type PlayerState struct {
 //   - Tách struct internal (PlayerState — có UpdatedAt, Dirty) khỏi DTO network (PlayerSync)
 //   - Giúp việc thay đổi internal struct không ảnh hưởng wire format
 //   - Tách hàm riêng để dễ test (input PlayerState, output PlayerSync)
-func (p *PlayerState) ToSync() *protocol.PlayerSync {
-	return &protocol.PlayerSync{
-		UserID:         p.UserID,
+func (p *PlayerState) ToSync() *pb.PlayerSync {
+	return &pb.PlayerSync{
+		UserId:         p.UserID,
 		X:              p.X,
 		Y:              p.Y,
 		Trangthai:      p.Trangthai,
 		Dir:            p.Dir,
 		Dau:            p.Dau,
 		Than:           p.Than,
-		Chan:           p.Chan,
+		ChanField:      p.ChanField,
 		TimeChoHienBay: p.TimeChoHienBay,
 		LechDauX:       p.LechDauX,
 		LechDauY:       p.LechDauY,
@@ -79,6 +85,8 @@ func (p *PlayerState) ToSync() *protocol.PlayerSync {
 		Rong:           p.Rong,
 		Cao:            p.Cao,
 		Avatar:         p.Avatar,
+		// ServerTime KHÔNG set ở đây — caller (ticker) set sau khi ToSync() trả về
+		// vì ServerTime là thời điểm gửi packet, không phải thời điểm nhận move
 	}
 }
 
@@ -88,21 +96,21 @@ func (p *PlayerState) ToSync() *protocol.PlayerSync {
 //
 // AI GỌI:
 //   - loop.Ticker.tick() — mỗi 2s flush Redis, cần convert PlayerState sang PlayerMove
-//     để tái sử dụng playerService.HandleMove
+//     để tái sử dụng playerService.HandleMoveBatch
 //
 // MỤC ĐÍCH:
 //   - Tránh duplicate logic Redis write — HandleMove đã có sẵn pipeline + dirty key
 //   - Tách hàm riêng để dễ test
-func (p *PlayerState) ToMove() *protocol.PlayerMove {
-	return &protocol.PlayerMove{
-		MapID:          p.MapID,
+func (p *PlayerState) ToMove() *pb.PlayerMove {
+	return &pb.PlayerMove{
+		MapId:          p.MapID,
 		X:              p.X,
 		Y:              p.Y,
 		Trangthai:      p.Trangthai,
 		Dir:            p.Dir,
 		Dau:            p.Dau,
 		Than:           p.Than,
-		Chan:           p.Chan,
+		ChanField:      p.ChanField,
 		TimeChoHienBay: p.TimeChoHienBay,
 		LechDauX:       p.LechDauX,
 		LechDauY:       p.LechDauY,
@@ -167,7 +175,7 @@ func newMapState(mapID string) *MapState {
 // THREAD SAFETY: lock ms.mu (write lock vì có ghi)
 //
 // TODO: anti-cheat validation ở đây (max speed, collision với tường, ...)
-func (ms *MapState) UpdateFromMove(userID int32, m *protocol.PlayerMove) {
+func (ms *MapState) UpdateFromMove(userID int32, m *pb.PlayerMove) {
 	now := time.Now().UnixMilli()
 
 	ms.mu.Lock()
@@ -189,7 +197,7 @@ func (ms *MapState) UpdateFromMove(userID int32, m *protocol.PlayerMove) {
 	p.Dir = m.Dir
 	p.Dau = m.Dau
 	p.Than = m.Than
-	p.Chan = m.Chan
+	p.ChanField = m.ChanField // proto dùng ChanField; Redis key vẫn là "chan" (xem service.go)
 	p.TimeChoHienBay = m.TimeChoHienBay
 	p.LechDauX = m.LechDauX
 	p.LechDauY = m.LechDauY
@@ -466,7 +474,7 @@ func (m *Manager) RemovePlayerFromMap(mapID string, userID int32) {
 	}
 }
 
-// Xem player có tồn tại trên map nữa không
+// PlayerExistsInMap kiểm tra player có tồn tại trên map không.
 func (m *Manager) PlayerExistsInMap(mapID string, userID int32) bool {
 	ms, ok := m.GetMap(mapID)
 	if !ok {
