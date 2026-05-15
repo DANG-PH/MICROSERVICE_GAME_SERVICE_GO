@@ -903,8 +903,8 @@ const file_game_proto_rawDesc = "" +
 	"\x13NACK_REASON_VERSION\x10\x01\x12\x14\n" +
 	"\x10NACK_REASON_AUTH\x10\x02\x12\x17\n" +
 	"\x13NACK_REASON_SESSION\x10\x03\x12\x18\n" +
-	"\x14NACK_REASON_INTERNAL\x10cBh\n" +
-	"\x1bcom.dang.dragonboy.protocolB\tGameProtoZ>github.com/DANG-PH/game-service-go/internal/protocol/pb;gamepbb\x06proto3"
+	"\x14NACK_REASON_INTERNAL\x10cBm\n" +
+	" com.dang.dragonboy.network.protoB\tGameProtoZ>github.com/DANG-PH/game-service-go/internal/protocol/pb;gamepbb\x06proto3"
 
 var (
 	file_game_proto_rawDescOnce sync.Once

@@ -3,7 +3,7 @@ syntax = "proto3";
 package game;
 
 option go_package = "github.com/DANG-PH/game-service-go/internal/protocol/pb;gamepb";
-option java_package = "com.dang.dragonboy.protocol";
+option java_package = "com.dang.dragonboy.network.proto";
 option java_outer_classname = "GameProto";
 
 // =============================================================
