@@ -10,6 +10,7 @@ import (
 	"github.com/DANG-PH/game-service-go/internal/auth"
 	"github.com/DANG-PH/game-service-go/internal/infra/bus"
 	redisclient "github.com/DANG-PH/game-service-go/internal/infra/redis"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/DANG-PH/game-service-go/internal/transport/ws"
 
@@ -87,6 +88,10 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		totalConns, totalRooms := hub.Stats()
 		fmt.Fprintf(w, "ok\nnode=%s\nconns=%d\nrooms=%d\n", b.NodeID(), totalConns, totalRooms)
 	})
+
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe("0.0.0.0:2112", metricsMux)
 
 	// HTTP server với timeout config.
 	// ReadHeaderTimeout chống slowloris (client gửi header chậm để giữ connection).
